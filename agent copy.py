@@ -177,7 +177,7 @@ class NodeAgent:
 
 if __name__ == "__main__":
     # 示例使用
-    agent = NodeAgent("http://localhost:8500", "us-west", 8501)
+    agent = NodeAgent("http://localhost:8500", "us-west", 8502)
     agent.start()
     
     # 保持主程序运行

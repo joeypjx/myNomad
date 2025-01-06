@@ -2,9 +2,10 @@ import threading
 import time
 import queue
 from typing import List
-from models import Allocation
+from models import Allocation, JobStatus
 from node_manager import NodeManager
 from scheduler import Scheduler
+from agent_client import AgentClient
 
 class Leader:
     def __init__(self):
@@ -12,6 +13,7 @@ class Leader:
         self.evaluation_queue = queue.Queue()  # 评估队列
         self.plan_queue = queue.Queue()       # 计划队列
         self.scheduler = Scheduler(self.node_manager)  # 调度器
+        self.agent_client = AgentClient()     # agent客户端
         self.allocations = []                 # 已创建的分配
         
         # 启动处理线程
@@ -22,6 +24,10 @@ class Leader:
         self.plan_thread.start()
         
         print("[Leader] Leader服务已启动")
+
+    def register_agent_endpoint(self, node_id: str, endpoint: str):
+        """注册agent的endpoint"""
+        self.agent_client.register_agent(node_id, endpoint)
 
     def enqueue_evaluation(self, evaluation):
         """将评估加入队列"""
@@ -49,9 +55,19 @@ class Leader:
                 plan = self.plan_queue.get()
                 print(f"[Leader] 正在执行分配计划: {[alloc.id for alloc in plan]}")
                 for allocation in plan:
-                    self.node_manager.update_allocation(allocation)
-                    self.allocations.append(allocation)
-                    print(f"[Leader] 已创建分配 {allocation.id}, 节点: {allocation.node_id}")
+                    # 发送分配计划到agent
+                    result = self.agent_client.send_allocation(allocation)
+                    if result:
+                        # 更新本地状态
+                        allocation.status = JobStatus.RUNNING
+                        self.node_manager.update_allocation(allocation)
+                        self.allocations.append(allocation)
+                        print(f"[Leader] 已创建分配 {allocation.id}, 节点: {allocation.node_id}")
+                    else:
+                        # 分配失败
+                        allocation.status = JobStatus.FAILED
+                        self.node_manager.update_allocation(allocation)
+                        print(f"[Leader] 分配失败 {allocation.id}")
             time.sleep(1)
 
     def get_node_manager(self):
