@@ -173,7 +173,7 @@ class NodeManager:
                 allocation.id,
                 allocation.job_id,
                 allocation.node_id,
-                allocation.task_group,
+                allocation.task_group.name,
                 allocation.status.value
             ))
             

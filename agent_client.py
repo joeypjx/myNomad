@@ -21,10 +21,22 @@ class AgentClient:
 
         try:
             endpoint = f"{self.agent_endpoints[node_id]}/allocations"
+            # 将TaskGroup对象转换为可序列化的字典
+            task_group_data = {
+                "name": allocation.task_group.name,
+                "tasks": [
+                    {
+                        "name": task.name,
+                        "resources": task.resources,
+                        "config": task.config
+                    } for task in allocation.task_group.tasks
+                ]
+            }
+            
             allocation_data = {
                 "allocation_id": allocation.id,
                 "job_id": allocation.job_id,
-                "task_group": allocation.task_group,
+                "task_group": task_group_data,
                 "status": allocation.status.value
             }
             

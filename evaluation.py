@@ -1,7 +1,7 @@
 from typing import List, Dict
 import json
 import uuid
-from models import EvaluationStatus, Job, Allocation, TriggerEvent
+from models import EvaluationStatus, Job, Allocation, TriggerEvent, TaskGroup
 
 class Evaluation:
     def __init__(self, id: str, trigger_event: TriggerEvent, job: Job, nodes: List[Dict]):
@@ -19,12 +19,16 @@ class Evaluation:
         print(f"[Evaluation] 作业 {self.job.id} 包含 {len(self.job.task_groups)} 个任务组")
         
         for task_group in self.job.task_groups:
-            print(f"\n[Evaluation] 处理任务组: {task_group['name']}")
-            print(f"[Evaluation] 资源需求: CPU {task_group.get('cpu', 0)}, 内存 {task_group.get('memory', 0)}MB")
+            print(f"\n[Evaluation] 处理任务组: {task_group.name}")
+            total_resources = task_group.get_total_resources()
+            print(f"[Evaluation] 任务组总资源需求: CPU {total_resources['cpu']}, 内存 {total_resources['memory']}MB")
+            print(f"[Evaluation] 包含 {len(task_group.tasks)} 个任务:")
+            for task in task_group.tasks:
+                print(f"  - {task.name}: CPU {task.resources['cpu']}, 内存 {task.resources['memory']}MB")
             
             feasible_nodes = self.feasibility_check(task_group)
             if not feasible_nodes:
-                print(f"[Evaluation] 没有找到适合任务组 {task_group['name']} 的节点")
+                print(f"[Evaluation] 没有找到适合任务组 {task_group.name} 的节点")
                 self.status = EvaluationStatus.FAILED
                 return False
                 
@@ -43,10 +47,12 @@ class Evaluation:
         print(f"[Evaluation] 评估完成，生成了 {len(self.plan)} 个分配计划")
         return True
 
-    def feasibility_check(self, task_group: Dict) -> List[Dict]:
+    def feasibility_check(self, task_group: TaskGroup) -> List[Dict]:
         """检查节点的可行性"""
         feasible_nodes = []
         print(f"[Evaluation] 开始节点可行性检查，共有 {len(self.nodes)} 个节点待检查")
+        
+        total_resources = task_group.get_total_resources()
         
         for node in self.nodes:
             if not node["healthy"]:
@@ -58,12 +64,12 @@ class Evaluation:
                 continue
             
             resources = json.loads(node["resources"])
-            if resources["cpu"] < task_group.get("cpu", 0):
-                print(f"[Evaluation] 节点 {node['node_id']} CPU不足，要求: {task_group.get('cpu', 0)}, 可用: {resources['cpu']}")
+            if resources["cpu"] < total_resources["cpu"]:
+                print(f"[Evaluation] 节点 {node['node_id']} CPU不足，要求: {total_resources['cpu']}, 可用: {resources['cpu']}")
                 continue
                 
-            if resources["memory"] < task_group.get("memory", 0):
-                print(f"[Evaluation] 节点 {node['node_id']} 内存不足，要求: {task_group.get('memory', 0)}, 可用: {resources['memory']}")
+            if resources["memory"] < total_resources["memory"]:
+                print(f"[Evaluation] 节点 {node['node_id']} 内存不足，要求: {total_resources['memory']}, 可用: {resources['memory']}")
                 continue
             
             print(f"[Evaluation] 节点 {node['node_id']} 满足要求")
@@ -79,7 +85,7 @@ class Evaluation:
         
         return sorted(nodes, key=get_score, reverse=True)
 
-    def generate_plan(self, task_group: Dict, nodes: List[Dict]):
+    def generate_plan(self, task_group: TaskGroup, nodes: List[Dict]):
         """生成分配计划"""
         if not nodes:
             return
@@ -89,6 +95,6 @@ class Evaluation:
             id=str(uuid.uuid4()),
             job_id=self.job.id,
             node_id=selected_node["node_id"],
-            task_group=task_group["name"]
+            task_group=task_group
         )
         self.plan.append(allocation) 

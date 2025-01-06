@@ -49,17 +49,24 @@ class NodeAgent:
             if not all(field in data for field in required_fields):
                 return jsonify({"error": "Missing required fields"}), 400
             
+            task_group_data = data["task_group"]
             allocation = TaskAllocation(
                 data["allocation_id"],
                 data["job_id"],
-                data["task_group"]
+                task_group_data["name"]
             )
             
             # 存储分配信息
             self.allocations[allocation.id] = allocation
             
-            # 启动任务执行
-            threading.Thread(target=self.execute_allocation, args=(allocation,), daemon=True).start()
+            # 为每个任务启动一个执行线程
+            for task in task_group_data["tasks"]:
+                thread = threading.Thread(
+                    target=self.execute_task,
+                    args=(allocation, task),
+                    daemon=True
+                )
+                thread.start()
             
             return jsonify({
                 "message": "Allocation accepted",
@@ -81,24 +88,31 @@ class NodeAgent:
                 "end_time": allocation.end_time
             }), 200
 
-    def execute_allocation(self, allocation: TaskAllocation):
-        """执行分配的任务"""
+    def execute_task(self, allocation: TaskAllocation, task: Dict):
+        """执行单个任务"""
         try:
-            print(f"[Agent] 开始执行任务: {allocation.id}")
+            print(f"[Agent] 开始执行任务: {allocation.id}/{task['name']}")
+            
+            # 更新任务状态
             allocation.status = AllocationStatus.RUNNING
-            allocation.start_time = time.time()
+            if not hasattr(allocation, 'start_time'):
+                allocation.start_time = time.time()
             
             # 这里模拟任务执行
-            # 实际应用中，这里应该根据task_group的配置来执行具体的任务
+            # 实际应用中，这里应该根据task的config来执行具体的任务
+            print(f"[Agent] 任务配置: {json.dumps(task['config'], indent=2)}")
+            print(f"[Agent] 资源分配: CPU {task['resources']['cpu']}, 内存 {task['resources']['memory']}MB")
             time.sleep(10)  # 模拟任务执行时间
             
-            allocation.status = AllocationStatus.COMPLETE
-            allocation.end_time = time.time()
-            print(f"[Agent] 任务执行完成: {allocation.id}")
+            print(f"[Agent] 任务执行完成: {allocation.id}/{task['name']}")
             
         except Exception as e:
-            print(f"[Agent] 任务执行失败: {allocation.id}, 错误: {e}")
+            print(f"[Agent] 任务执行失败: {allocation.id}/{task['name']}, 错误: {e}")
             allocation.status = AllocationStatus.FAILED
+            
+        # 检查是否所有任务都完成了
+        if allocation.status != AllocationStatus.FAILED:
+            allocation.status = AllocationStatus.COMPLETE
             allocation.end_time = time.time()
 
     def get_resources(self) -> Dict:
