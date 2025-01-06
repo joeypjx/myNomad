@@ -1,0 +1,63 @@
+import threading
+import time
+import queue
+from typing import List
+from models import Allocation
+from node_manager import NodeManager
+from scheduler import Scheduler
+
+class Leader:
+    def __init__(self):
+        self.node_manager = NodeManager()
+        self.evaluation_queue = queue.Queue()  # 评估队列
+        self.plan_queue = queue.Queue()       # 计划队列
+        self.scheduler = Scheduler(self.node_manager)  # 调度器
+        self.allocations = []                 # 已创建的分配
+        
+        # 启动处理线程
+        self.eval_thread = threading.Thread(target=self.process_evaluations, daemon=True)
+        self.eval_thread.start()
+        
+        self.plan_thread = threading.Thread(target=self.process_plans, daemon=True)
+        self.plan_thread.start()
+        
+        print("[Leader] Leader服务已启动")
+
+    def enqueue_evaluation(self, evaluation):
+        """将评估加入队列"""
+        self.evaluation_queue.put(evaluation)
+        print(f"[Leader] 已将评估 {evaluation.id} 加入队列")
+
+    def submit_plan(self, plan: List[Allocation]):
+        """将计划加入队列"""
+        self.plan_queue.put(plan)
+        print(f"[Leader] 已将分配计划加入队列: {[alloc.id for alloc in plan]}")
+
+    def process_evaluations(self):
+        """处理评估队列中的评估"""
+        while True:
+            if not self.evaluation_queue.empty():
+                evaluation = self.evaluation_queue.get()
+                print(f"[Leader] 正在处理评估 {evaluation.id}")
+                self.scheduler.process_evaluation(evaluation, self)
+            time.sleep(1)
+
+    def process_plans(self):
+        """处理计划队列中的计划"""
+        while True:
+            if not self.plan_queue.empty():
+                plan = self.plan_queue.get()
+                print(f"[Leader] 正在执行分配计划: {[alloc.id for alloc in plan]}")
+                for allocation in plan:
+                    self.node_manager.update_allocation(allocation)
+                    self.allocations.append(allocation)
+                    print(f"[Leader] 已创建分配 {allocation.id}, 节点: {allocation.node_id}")
+            time.sleep(1)
+
+    def get_node_manager(self):
+        """获取节点管理器实例"""
+        return self.node_manager
+
+    def get_scheduler(self):
+        """获取调度器实例"""
+        return self.scheduler 
