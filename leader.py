@@ -9,21 +9,22 @@ from agent_client import AgentClient
 
 class Leader:
     def __init__(self):
+        self.agent_client = AgentClient()
         self.node_manager = NodeManager()
-        self.evaluation_queue = queue.Queue()  # 评估队列
-        self.plan_queue = queue.Queue()       # 计划队列
-        self.scheduler = Scheduler(self.node_manager)  # 调度器
-        self.agent_client = AgentClient()     # agent客户端
-        self.allocations = []                 # 已创建的分配
+        self.node_manager.agent_client = self.agent_client  # 注入agent_client
+        self.scheduler = Scheduler(self.node_manager)
+        self.evaluation_queue = queue.Queue()
+        self.plan_queue = queue.Queue()
         
-        # 启动处理线程
+        # 启动评估处理线程
         self.eval_thread = threading.Thread(target=self.process_evaluations, daemon=True)
         self.eval_thread.start()
         
+        # 启动计划处理线程
         self.plan_thread = threading.Thread(target=self.process_plans, daemon=True)
         self.plan_thread.start()
         
-        print("[Leader] Leader服务已启动")
+        print("[Leader] Leader服务已初始化")
 
     def register_agent_endpoint(self, node_id: str, endpoint: str):
         """注册agent的endpoint"""
@@ -61,7 +62,6 @@ class Leader:
                         # 更新本地状态
                         allocation.status = JobStatus.RUNNING
                         self.node_manager.update_allocation(allocation)
-                        self.allocations.append(allocation)
                         print(f"[Leader] 已创建分配 {allocation.id}, 节点: {allocation.node_id}")
                     else:
                         # 分配失败

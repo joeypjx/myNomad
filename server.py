@@ -70,10 +70,62 @@ def submit_job():
     if evaluation:
         leader.enqueue_evaluation(evaluation)
         print(f"[API] 作业评估已加入队列，评估ID: {evaluation.id}")
-        return jsonify({"evaluation_id": evaluation.id}), 200
+        return jsonify({
+            "job_id": evaluation.job.id,
+            "evaluation_id": evaluation.id,
+            "message": "作业评估已加入队列"
+        }), 200
     else:
         print("[API] 作业提交失败")
         return jsonify({"error": "Failed to submit job"}), 500
+
+@app.route('/jobs/<job_id>', methods=['PUT'])
+def update_job(job_id):
+    """更新作业"""
+    data = request.get_json()
+    print(f"\n[Server] 收到作业更新请求: {job_id}")
+    print(f"[Server] 更新数据: {json.dumps(data, indent=2)}")
+    
+    # 验证作业是否存在
+    job = node_manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "作业不存在"}), 404
+    
+    # 创建评估
+    evaluation = scheduler.create_evaluation(data, job_id=job_id)
+    if not evaluation:
+        return jsonify({"error": "无法创建评估"}), 400
+    
+    # 将评估加入队列
+    leader.enqueue_evaluation(evaluation)
+    print(f"[Server] 作业更新评估已加入队列: {evaluation.id}")
+    
+    return jsonify({
+        "job_id": job_id,
+        "evaluation_id": evaluation.id,
+        "message": "作业更新评估已加入队列"
+    })
+
+@app.route('/jobs/<job_id>', methods=['DELETE'])
+def stop_job(job_id):
+    """停止作业"""
+    print(f"\n[Server] 收到停止作业请求: {job_id}")
+    
+    # 验证作业是否存在
+    job = node_manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "作业不存在"}), 404
+    
+    # 停止作业
+    success = node_manager.stop_job(job_id)
+    if success:
+        return jsonify({
+            "message": f"作业 {job_id} 已停止"
+        }), 200
+    else:
+        return jsonify({
+            "error": f"停止作业 {job_id} 失败"
+        }), 500
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8500) 

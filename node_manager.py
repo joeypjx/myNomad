@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 import threading
 import time
 import json
@@ -132,18 +132,74 @@ class NodeManager:
         finally:
             conn.close()
 
-    def submit_job(self, job_data: Dict) -> str:
-        """提交新作业"""
+    def get_job(self, job_id: str) -> Optional[Dict]:
+        """获取作业信息"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            job_id = str(uuid.uuid4())
-            print(f"\n[NodeManager] 正在提交新作业，作业ID: {job_id}")
+            cursor.execute('SELECT * FROM jobs WHERE job_id = ?', (job_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    "job_id": row[0],
+                    "task_groups": json.loads(row[1]),
+                    "constraints": json.loads(row[2]),
+                    "status": row[3]
+                }
+            return None
+        finally:
+            conn.close()
+
+    def get_job_allocations(self, job_id: str) -> List[Dict]:
+        """获取作业的所有分配"""
+        print(f"[NodeManager] 获取作业 {job_id} 的所有分配")
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT allocation_id, node_id, task_group, status
+            FROM allocations
+            WHERE job_id = ?
+        ''', (job_id,))
+        allocations = cursor.fetchall()
+
+        conn.commit()
+        conn.close()
+        return [
+            {
+                "allocation_id": row[0],
+                "node_id": row[1],
+                "task_group": row[2],
+                "status": row[3]
+            }
+            for row in allocations
+        ]
+
+    def submit_job(self, job_data: Dict) -> Tuple[str, bool]:
+        """提交新作业或更新现有作业"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 检查是否是现有作业的更新
+            job_id = job_data.get("job_id")
+            is_update = False
+            
+            if job_id:
+                # 检查作业是否存在
+                cursor.execute('SELECT 1 FROM jobs WHERE job_id = ?', (job_id,))
+                if cursor.fetchone():
+                    is_update = True
+            else:
+                job_id = str(uuid.uuid4())
+            
+            print(f"\n[NodeManager] {'更新' if is_update else '提交新'}作业，作业ID: {job_id}")
             print(f"[NodeManager] 作业详情: {json.dumps(job_data, indent=2, ensure_ascii=False)}")
             
             cursor.execute('''
-                INSERT INTO jobs (job_id, task_groups, constraints, status)
+                INSERT OR REPLACE INTO jobs (job_id, task_groups, constraints, status)
                 VALUES (?, ?, ?, ?)
             ''', (
                 job_id,
@@ -154,11 +210,11 @@ class NodeManager:
             
             conn.commit()
             conn.close()
-            print(f"[NodeManager] 作业已保存到数据库")
-            return job_id
+            print(f"[NodeManager] 作业已{'更新' if is_update else '保存'}到数据库")
+            return job_id, is_update
         except Exception as e:
             print(f"[NodeManager] 提交作业时出错: {e}")
-            return None
+            return None, False
 
     def update_allocation(self, allocation: Allocation) -> bool:
         """更新分配状态"""
@@ -167,7 +223,7 @@ class NodeManager:
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO allocations (allocation_id, job_id, node_id, task_group, status)
+                INSERT OR REPLACE INTO allocations (allocation_id, job_id, node_id, task_group, status)
                 VALUES (?, ?, ?, ?, ?)
             ''', (
                 allocation.id,
@@ -183,6 +239,38 @@ class NodeManager:
             return True
         except Exception as e:
             print(f"[NodeManager] 更新分配状态时出错: {e}")
+            return False
+
+    def delete_allocation(self, allocation_id: str) -> bool:
+        """删除分配"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 先获取分配信息
+            cursor.execute('''
+                SELECT node_id, allocation_id
+                FROM allocations
+                WHERE allocation_id = ?
+            ''', (allocation_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                node_id = row[0]
+                # 通知节点停止任务
+                if hasattr(self, 'agent_client'):
+                    success = self.agent_client.stop_allocation(node_id, allocation_id)
+                    if not success:
+                        print(f"[NodeManager] 警告：通知节点停止分配失败: {allocation_id}")
+            
+            # 从数据库中删除分配
+            cursor.execute('DELETE FROM allocations WHERE allocation_id = ?', (allocation_id,))
+            conn.commit()
+            conn.close()
+            print(f"[NodeManager] 删除分配成功: {allocation_id}")
+            return True
+        except Exception as e:
+            print(f"[NodeManager] 删除分配时出错: {e}")
             return False
 
     def _check_node_health(self):
@@ -208,3 +296,50 @@ class NodeManager:
                 print(f"[NodeManager] 健康检查时出错: {e}")
             
             time.sleep(5) 
+
+    def stop_job(self, job_id: str) -> bool:
+        """停止作业
+        1. 获取作业的所有分配
+        2. 通知相关节点停止任务
+        3. 删除分配记录
+        4. 更新作业状态
+        """
+        try:
+            print(f"\n[NodeManager] 开始停止作业: {job_id}")
+            
+            # 获取作业的所有分配
+            allocations = self.get_job_allocations(job_id)
+            if not allocations:
+                print(f"[NodeManager] 作业 {job_id} 没有活跃的分配")
+            
+            # 停止所有分配
+            for allocation in allocations:
+                if hasattr(self, 'agent_client'):
+                    success = self.agent_client.stop_allocation(
+                        allocation["node_id"], 
+                        allocation["allocation_id"]
+                    )
+                    if not success:
+                        print(f"[NodeManager] 警告：通知节点停止分配失败: {allocation['allocation_id']}")
+                
+                # 无论通知成功与否，都删除分配记录
+                self.delete_allocation(allocation["allocation_id"])
+            
+            # 更新作业状态
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE jobs 
+                SET status = ? 
+                WHERE job_id = ?
+            ''', (JobStatus.COMPLETE.value, job_id))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 作业 {job_id} 已停止")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 停止作业时出错: {e}")
+            return False 

@@ -88,6 +88,24 @@ class NodeAgent:
                 "end_time": allocation.end_time
             }), 200
 
+        @self.app.route('/allocations/<allocation_id>', methods=['DELETE'])
+        def stop_allocation(allocation_id):
+            """停止分配的所有任务"""
+            allocation = self.allocations.get(allocation_id)
+            if not allocation:
+                return jsonify({"error": "Allocation not found"}), 404
+            
+            print(f"[Agent] 停止分配 {allocation_id} 的所有任务")
+            # 停止所有相关任务
+            self.stop_tasks(allocation)
+            
+            # 从分配列表中移除
+            del self.allocations[allocation_id]
+            
+            return jsonify({
+                "message": f"Allocation {allocation_id} stopped and removed"
+            }), 200
+
     def execute_task(self, allocation: TaskAllocation, task: Dict):
         """执行单个任务"""
         try:
@@ -188,6 +206,14 @@ class NodeAgent:
         
         # 启动API服务器
         self.app.run(host='0.0.0.0', port=self.agent_port)
+
+    def stop_tasks(self, allocation: TaskAllocation):
+        """停止分配相关的所有任务"""
+        print(f"[Agent] 正在停止分配 {allocation.id} 的任务")
+        # TODO: 实际环境中，这里需要调用相应的容器运行时（如Docker）来停止任务
+        allocation.status = AllocationStatus.COMPLETE
+        allocation.end_time = time.time()
+        print(f"[Agent] 分配 {allocation.id} 的任务已停止")
 
 if __name__ == "__main__":
     # 示例使用

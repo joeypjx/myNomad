@@ -82,3 +82,29 @@ class AgentClient:
         except requests.exceptions.RequestException as e:
             print(f"[AgentClient] 获取分配状态失败: {e}")
             return None 
+
+    def stop_allocation(self, node_id: str, allocation_id: str) -> bool:
+        """通知agent停止分配"""
+        if node_id not in self.agent_endpoints:
+            print(f"[AgentClient] 错误：未找到节点 {node_id} 的agent endpoint")
+            return False
+
+        try:
+            endpoint = f"{self.agent_endpoints[node_id]}/allocations/{allocation_id}"
+            print(f"[AgentClient] 通知节点 {node_id} 停止分配: {allocation_id}")
+            response = requests.delete(
+                endpoint,
+                headers={"Content-Type": "application/json"},
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                print(f"[AgentClient] 节点 {node_id} 已确认停止分配: {allocation_id}")
+                return True
+            else:
+                print(f"[AgentClient] 节点 {node_id} 停止分配失败: {response.status_code}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            print(f"[AgentClient] 通知节点 {node_id} 停止分配时出错: {e}")
+            return False 
