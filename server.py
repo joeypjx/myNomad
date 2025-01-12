@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import json
 from leader import Leader
 from scheduler import Scheduler
@@ -6,6 +7,7 @@ from node_manager import NodeManager
 
 # 创建Flask应用
 app = Flask(__name__)
+CORS(app)  # 启用CORS支持
 node_manager = NodeManager()
 leader = Leader(node_manager)
 scheduler = Scheduler(node_manager)
@@ -130,17 +132,13 @@ def stop_job(job_id):
         }), 500
 
 @app.route('/jobs', methods=['GET'])
-def get_all_jobs():
+def get_jobs():
     """获取所有作业信息"""
-    print("\n[API] 收到获取所有作业信息的请求")
     jobs = node_manager.get_all_jobs()
-    if jobs is None:
-        return jsonify({"error": "获取作业信息失败"}), 500
-    
     return jsonify({
         "jobs": jobs,
         "count": len(jobs)
-    }), 200
+    })
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_info(job_id):

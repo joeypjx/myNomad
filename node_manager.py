@@ -65,6 +65,8 @@ class NodeManager:
             CREATE TABLE IF NOT EXISTS task_status (
                 allocation_id TEXT,
                 task_name TEXT,
+                resources TEXT,
+                config TEXT,
                 status TEXT,
                 start_time REAL,
                 end_time REAL,
@@ -444,33 +446,77 @@ class NodeManager:
             print(f"[NodeManager] 停止作业时出错: {e}")
             return False 
 
-    def get_all_jobs(self) -> Optional[List[Dict]]:
+    def get_all_jobs(self):
         """获取所有作业信息"""
         try:
+            # 创建数据库连接
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 获取所有作业基本信息
-            cursor.execute('SELECT job_id, task_groups, constraints, status FROM jobs')
-            job_rows = cursor.fetchall()
+            # 获取所有作业
+            cursor.execute("SELECT job_id, task_groups, constraints, status FROM jobs")
+            jobs = cursor.fetchall()
             
-            jobs = []
-            for job_row in job_rows:
-                job_id = job_row[0]
-                job_info = {
+            jobs_info = []
+            for job in jobs:
+                job_id, task_groups, constraints, status = job
+                
+                # 获取作业的所有分配信息
+                cursor.execute("""
+                    SELECT allocation_id, node_id, task_group, status, start_time, end_time 
+                    FROM allocations 
+                    WHERE job_id = ?
+                """, (job_id,))
+                allocations = cursor.fetchall()
+                
+                allocations_info = []
+                for alloc in allocations:
+                    allocation_id, node_id, task_group, alloc_status, start_time, end_time = alloc
+                    
+                    # 获取分配的所有任务信息
+                    cursor.execute("""
+                        SELECT task_name, resources, config, status, start_time, end_time, exit_code
+                        FROM task_status
+                        WHERE allocation_id = ?
+                    """, (allocation_id,))
+                    tasks = cursor.fetchall()
+                    
+                    tasks_info = {}
+                    for task in tasks:
+                        name, resources, config, task_status, task_start, task_end, exit_code = task
+                        tasks_info[name] = {
+                            "resources": json.loads(resources) if resources else {},
+                            "config": json.loads(config) if config else {},
+                            "status": task_status,
+                            "start_time": task_start,
+                            "end_time": task_end,
+                            "exit_code": exit_code
+                        }
+                    
+                    allocations_info.append({
+                        "allocation_id": allocation_id,
+                        "node_id": node_id,
+                        "task_group": task_group,
+                        "status": alloc_status,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "tasks": tasks_info
+                    })
+                
+                jobs_info.append({
                     "job_id": job_id,
-                    "task_groups": json.loads(job_row[1]),
-                    "constraints": json.loads(job_row[2]),
-                    "status": job_row[3]
-                }
-                jobs.append(job_info)
+                    "task_groups": json.loads(task_groups),
+                    "constraints": json.loads(constraints),
+                    "status": status,
+                    "allocations": allocations_info
+                })
             
             conn.close()
-            return jobs
+            return jobs_info
             
         except Exception as e:
-            print(f"[NodeManager] 获取所有作业信息时出错: {e}")
-            return None
+            print(f"获取作业信息时出错: {str(e)}")
+            return []
 
     def get_all_nodes(self) -> Optional[List[Dict]]:
         """获取所有节点信息"""
