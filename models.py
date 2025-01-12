@@ -12,6 +12,24 @@ class JobStatus(Enum):
     COMPLETE = "complete"
     FAILED = "failed"
 
+class TaskStatus(Enum):
+    PENDING = "pending"    # 任务已创建但尚未开始
+    RUNNING = "running"    # 任务正在运行
+    COMPLETE = "complete"  # 任务已成功完成
+    FAILED = "failed"      # 任务执行失败
+
+class TaskType(Enum):
+    PROCESS = "process"    # 非容器化的进程
+    CONTAINER = "container"  # 容器化的任务
+
+class AllocationStatus(Enum):
+    PENDING = "pending"    # 分配已创建但尚未开始
+    RUNNING = "running"    # 分配正在运行
+    COMPLETE = "complete"  # 分配已成功完成
+    FAILED = "failed"      # 分配执行失败
+    LOST = "lost"         # 分配丢失（节点失联）
+    STOPPED = "stopped"    # 分配被手动停止
+
 class TriggerEvent(Enum):
     JOB_SUBMIT = "job_submit"
     JOB_UPDATE = "job_update"
@@ -24,7 +42,8 @@ class Task:
         self.name = name
         self.resources = resources  # 例如：{"cpu": 100, "memory": 256}
         self.config = config       # 任务配置，例如：{"image": "nginx", "port": 80}
-        self.status = JobStatus.PENDING
+        self.status = TaskStatus.PENDING
+        self.task_type = TaskType.CONTAINER if config.get("image") else TaskType.PROCESS
 
 class TaskGroup:
     def __init__(self, name: str, tasks: List[Task]):
@@ -64,4 +83,4 @@ class Allocation:
         self.job_id = job_id
         self.node_id = node_id
         self.task_group = task_group
-        self.status = JobStatus.PENDING 
+        self.status = AllocationStatus.PENDING 

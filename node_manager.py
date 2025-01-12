@@ -13,6 +13,10 @@ class NodeManager:
         self.setup_database()
         self.check_thread = threading.Thread(target=self._check_node_health, daemon=True)
         self.check_thread.start()
+        self.nodes = {}  # 存储节点ID到节点对象的映射
+        self.allocations = {}  # 存储分配ID到分配对象的映射
+        self.agent_client = None  # 用于与Agent通信的客户端
+        print("[NodeManager] 节点管理器已初始化")
 
     def setup_database(self):
         """初始化数据库"""
@@ -48,8 +52,27 @@ class NodeManager:
                 node_id TEXT,
                 task_group TEXT,
                 status TEXT,
+                start_time REAL,
+                end_time REAL,
+                last_update REAL,
                 FOREIGN KEY(job_id) REFERENCES jobs(job_id),
                 FOREIGN KEY(node_id) REFERENCES nodes(node_id)
+            )
+        ''')
+        
+        # 创建任务状态表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS task_status (
+                allocation_id TEXT,
+                task_name TEXT,
+                status TEXT,
+                start_time REAL,
+                end_time REAL,
+                error TEXT,
+                exit_code INTEGER,
+                last_update REAL,
+                PRIMARY KEY (allocation_id, task_name),
+                FOREIGN KEY(allocation_id) REFERENCES allocations(allocation_id)
             )
         ''')
         
@@ -87,6 +110,7 @@ class NodeManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            # 更新节点信息
             cursor.execute('''
                 UPDATE nodes 
                 SET resources = ?, 
@@ -99,6 +123,42 @@ class NodeManager:
                 heartbeat_data["timestamp"],
                 heartbeat_data["node_id"]
             ))
+            
+            # 更新分配状态
+            if "allocations" in heartbeat_data:
+                for allocation_id, allocation_status in heartbeat_data["allocations"].items():
+                    # 更新分配状态
+                    cursor.execute('''
+                        UPDATE allocations 
+                        SET status = ?,
+                            start_time = ?,
+                            end_time = ?,
+                            last_update = ?
+                        WHERE allocation_id = ?
+                    ''', (
+                        allocation_status["status"],
+                        allocation_status["start_time"],
+                        allocation_status["end_time"],
+                        heartbeat_data["timestamp"],
+                        allocation_id
+                    ))
+                    
+                    # 更新任务状态
+                    for task_name, task_status in allocation_status["tasks"].items():
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO task_status
+                            (allocation_id, task_name, status, start_time, end_time, error, exit_code, last_update)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            allocation_id,
+                            task_name,
+                            task_status["status"],
+                            task_status["start_time"],
+                            task_status["end_time"],
+                            task_status.get("error"),
+                            task_status.get("exit_code"),
+                            heartbeat_data["timestamp"]
+                        ))
             
             conn.commit()
             conn.close()
@@ -241,8 +301,12 @@ class NodeManager:
             print(f"[NodeManager] 更新分配状态时出错: {e}")
             return False
 
-    def delete_allocation(self, allocation_id: str) -> bool:
-        """删除分配"""
+    def delete_allocation(self, allocation_id: str, notify_agent: bool = True) -> bool:
+        """删除分配
+        Args:
+            allocation_id: 分配ID
+            notify_agent: 是否需要通知agent停止任务，默认为True
+        """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -255,7 +319,7 @@ class NodeManager:
             ''', (allocation_id,))
             row = cursor.fetchone()
             
-            if row:
+            if row and notify_agent:
                 node_id = row[0]
                 # 通知节点停止任务
                 if hasattr(self, 'agent_client'):
@@ -281,6 +345,8 @@ class NodeManager:
                 cursor = conn.cursor()
                 
                 timeout_threshold = time.time() - self.heartbeat_timeout
+                
+                # 标记不健康的节点
                 cursor.execute('''
                     UPDATE nodes 
                     SET healthy = 0 
@@ -289,6 +355,37 @@ class NodeManager:
                 
                 if cursor.rowcount > 0:
                     print(f"[NodeManager] 标记 {cursor.rowcount} 个节点为不健康状态（心跳超时）")
+                    
+                    # 获取不健康节点上的分配
+                    cursor.execute('''
+                        SELECT a.allocation_id, a.job_id, a.node_id
+                        FROM allocations a
+                        JOIN nodes n ON a.node_id = n.node_id
+                        WHERE n.healthy = 0 
+                        AND a.status NOT IN ('complete', 'failed', 'lost', 'stopped')
+                    ''')
+                    lost_allocations = cursor.fetchall()
+                    
+                    # 更新这些分配的状态为 LOST
+                    for alloc in lost_allocations:
+                        allocation_id, job_id, node_id = alloc
+                        print(f"[NodeManager] 标记分配 {allocation_id} 为丢失状态（节点 {node_id} 不健康）")
+                        
+                        cursor.execute('''
+                            UPDATE allocations 
+                            SET status = ?, 
+                                end_time = ?
+                            WHERE allocation_id = ?
+                        ''', ('lost', time.time(), allocation_id))
+                        
+                        # 更新相关任务的状态
+                        cursor.execute('''
+                            UPDATE task_status
+                            SET status = ?,
+                                end_time = ?
+                            WHERE allocation_id = ?
+                            AND status NOT IN ('complete', 'failed')
+                        ''', ('lost', time.time(), allocation_id))
                 
                 conn.commit()
                 conn.close()
@@ -322,8 +419,8 @@ class NodeManager:
                     if not success:
                         print(f"[NodeManager] 警告：通知节点停止分配失败: {allocation['allocation_id']}")
                 
-                # 无论通知成功与否，都删除分配记录
-                self.delete_allocation(allocation["allocation_id"])
+                # 无论通知成功与否，都删除分配记录（不再重复通知agent）
+                self.delete_allocation(allocation["allocation_id"], notify_agent=False)
             
             # 更新作业状态
             conn = sqlite3.connect(self.db_path)
@@ -343,3 +440,166 @@ class NodeManager:
         except Exception as e:
             print(f"[NodeManager] 停止作业时出错: {e}")
             return False 
+
+    def get_all_jobs(self) -> Optional[List[Dict]]:
+        """获取所有作业信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取所有作业基本信息
+            cursor.execute('SELECT job_id, task_groups, constraints, status FROM jobs')
+            job_rows = cursor.fetchall()
+            
+            jobs = []
+            for job_row in job_rows:
+                job_id = job_row[0]
+                job_info = {
+                    "job_id": job_id,
+                    "task_groups": json.loads(job_row[1]),
+                    "constraints": json.loads(job_row[2]),
+                    "status": job_row[3]
+                }
+                jobs.append(job_info)
+            
+            conn.close()
+            return jobs
+            
+        except Exception as e:
+            print(f"[NodeManager] 获取所有作业信息时出错: {e}")
+            return None
+
+    def get_all_nodes(self) -> Optional[List[Dict]]:
+        """获取所有节点信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT node_id, region, resources, healthy, last_heartbeat 
+                FROM nodes
+            ''')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            nodes = []
+            for row in rows:
+                nodes.append({
+                    "node_id": row[0],
+                    "region": row[1],
+                    "resources": json.loads(row[2]),
+                    "healthy": bool(row[3]),
+                    "last_heartbeat": row[4]
+                })
+            return nodes
+        except Exception as e:
+            print(f"[NodeManager] 获取所有节点信息时出错: {e}")
+            return None
+
+    def get_node_allocations(self, node_id: str) -> List[Dict]:
+        """获取节点的所有分配"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT allocation_id, job_id, task_group, status, start_time, end_time
+                FROM allocations
+                WHERE node_id = ?
+            ''', (node_id,))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            allocations = []
+            for row in rows:
+                allocations.append({
+                    "allocation_id": row[0],
+                    "job_id": row[1],
+                    "task_group": row[2],
+                    "status": row[3],
+                    "start_time": row[4],
+                    "end_time": row[5]
+                })
+            return allocations
+        except Exception as e:
+            print(f"[NodeManager] 获取节点分配信息时出错: {e}")
+            return []
+
+    def get_allocation_tasks(self, allocation_id: str) -> List[Dict]:
+        """获取分配的所有任务状态"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT task_name, status, start_time, end_time, error, exit_code
+                FROM task_status
+                WHERE allocation_id = ?
+            ''', (allocation_id,))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            tasks = []
+            for row in rows:
+                tasks.append({
+                    "task_name": row[0],
+                    "status": row[1],
+                    "start_time": row[2],
+                    "end_time": row[3],
+                    "error": row[4],
+                    "exit_code": row[5]
+                })
+            return tasks
+        except Exception as e:
+            print(f"[NodeManager] 获取任务状态信息时出错: {e}")
+            return [] 
+
+    def get_job_info(self, job_id: str) -> Optional[Dict]:
+        """获取作业详细信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取作业基本信息
+            cursor.execute('''
+                SELECT job_id, task_groups, constraints, status 
+                FROM jobs 
+                WHERE job_id = ?
+            ''', (job_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return None
+                
+            job_info = {
+                "job_id": row[0],
+                "task_groups": json.loads(row[1]),
+                "constraints": json.loads(row[2]),
+                "status": row[3]
+            }
+            
+            # 获取作业的所有分配
+            cursor.execute('''
+                SELECT allocation_id, node_id, task_group, status, start_time, end_time
+                FROM allocations
+                WHERE job_id = ?
+            ''', (job_id,))
+            allocations = cursor.fetchall()
+            
+            # 处理分配信息
+            allocations_info = []
+            for alloc in allocations:
+                allocation_id, node_id, task_group, status, start_time, end_time = alloc
+                allocations_info.append({
+                    "allocation_id": allocation_id,
+                    "node_id": node_id,
+                    "task_group": task_group,
+                    "status": status,
+                    "start_time": start_time,
+                    "end_time": end_time
+                })
+            
+            job_info["allocations"] = allocations_info
+            conn.close()
+            return job_info
+            
+        except Exception as e:
+            print(f"[NodeManager] 获取作业信息时出错: {e}")
+            return None 

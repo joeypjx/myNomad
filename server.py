@@ -1,12 +1,14 @@
 from flask import Flask, request, jsonify
 import json
 from leader import Leader
+from scheduler import Scheduler
+from node_manager import NodeManager
 
 # 创建Flask应用
 app = Flask(__name__)
-leader = Leader()
-node_manager = leader.get_node_manager()
-scheduler = leader.get_scheduler()
+node_manager = NodeManager()
+leader = Leader(node_manager)
+scheduler = Scheduler(node_manager)
 
 @app.route('/register', methods=['POST'])
 def register_node():
@@ -126,6 +128,50 @@ def stop_job(job_id):
         return jsonify({
             "error": f"停止作业 {job_id} 失败"
         }), 500
+
+@app.route('/jobs', methods=['GET'])
+def get_all_jobs():
+    """获取所有作业信息"""
+    print("\n[API] 收到获取所有作业信息的请求")
+    jobs = node_manager.get_all_jobs()
+    if jobs is None:
+        return jsonify({"error": "获取作业信息失败"}), 500
+    
+    return jsonify({
+        "jobs": jobs,
+        "count": len(jobs)
+    }), 200
+
+@app.route('/jobs/<job_id>', methods=['GET'])
+def get_job_info(job_id):
+    """获取指定作业的详细信息"""
+    print(f"\n[API] 收到获取作业 {job_id} 的详细信息请求")
+    
+    job_info = node_manager.get_job_info(job_id)
+    if not job_info:
+        return jsonify({"error": "作业不存在"}), 404
+    
+    return jsonify(job_info), 200
+
+@app.route('/nodes', methods=['GET'])
+def get_all_nodes():
+    """获取所有节点信息"""
+    print("\n[API] 收到获取所有节点信息的请求")
+    nodes = node_manager.get_all_nodes()
+    if nodes is None:
+        return jsonify({"error": "获取节点信息失败"}), 500
+    
+    # 为每个节点添加其当前的分配信息
+    nodes_with_allocations = []
+    for node in nodes:
+        node_allocations = node_manager.get_node_allocations(node["node_id"])
+        node["allocations"] = node_allocations
+        nodes_with_allocations.append(node)
+    
+    return jsonify({
+        "nodes": nodes_with_allocations,
+        "count": len(nodes_with_allocations)
+    }), 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8500) 

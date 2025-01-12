@@ -29,6 +29,36 @@ def stop_job(job_id):
     return response.json()
 
 def main():
+    # 测试用例0：提交新作业  "command": "python my_script.py"
+    job0 = {
+        "task_groups": [
+            {
+                "name": "my_scripts",
+                "tasks": [
+                    {
+                        "name": "my_script",
+                        "resources": {
+                            "cpu": 300,
+                            "memory": 512
+                        },
+                        "config": {
+                            "command": "python my_script.py"
+                        }
+                    }
+                ]
+            }
+        ],
+        "constraints": {
+            "region": "us-west"
+        }
+    }
+
+    print("\n测试0：提交新作业")
+    result0 = submit_job(job0)
+    print(f"结果：{json.dumps(result0, indent=2, ensure_ascii=False)}")
+
+    time.sleep(10)
+    
     # 测试用例1：提交新作业
     job1 = {
         "task_groups": [
@@ -62,7 +92,7 @@ def main():
         print("错误：作业提交失败，缺少job_id或evaluation_id")
         return
         
-    time.sleep(5)  # 等待作业处理
+    time.sleep(10)  # 等待作业处理
     
     # 测试用例2：更新已有作业
     job1_updated = {
@@ -103,7 +133,7 @@ def main():
     result2 = update_job(result1["job_id"], job1_updated)
     print(f"结果：{json.dumps(result2, indent=2, ensure_ascii=False)}")
     
-    time.sleep(5)  # 等待作业更新处理
+    time.sleep(10)  # 等待作业更新处理
     
     # 测试用例3：提交多任务组作业
     job2 = {
@@ -119,7 +149,7 @@ def main():
                         },
                         "config": {
                             "image": "nginx:latest",
-                            "port": 80
+                            "port": 8000
                         }
                     },
                     {
@@ -161,7 +191,7 @@ def main():
     result3 = submit_job(job2)
     print(f"结果：{json.dumps(result3, indent=2, ensure_ascii=False)}")
     
-    time.sleep(5)  # 等待作业处理
+    time.sleep(10)  # 等待作业处理
     
     # 测试用例4：更新多任务组作业
     job2_updated = {
@@ -177,7 +207,7 @@ def main():
                         },
                         "config": {
                             "image": "nginx:latest",
-                            "port": 80
+                            "port": 8000
                         }
                     },
                     {
@@ -214,7 +244,8 @@ def main():
                             "memory": 256
                         },
                         "config": {
-                            "image": "backup-tool:latest"
+                            "image": "busybox:latest",
+                            "command": "echo 'Backup completed' > /backup.log"
                         }
                     }
                 ]
@@ -229,17 +260,23 @@ def main():
     result4 = update_job(result3["job_id"], job2_updated)
     print(f"结果：{json.dumps(result4, indent=2, ensure_ascii=False)}")
     
-    time.sleep(5)  # 等待作业更新处理
+    time.sleep(10)  # 等待作业更新处理
     
     # 测试用例5：停止作业
     print("\n测试5：停止作业")
-    print("停止第一个作业...")
+    print("停止第一个作业（job0）...")
+    stop_result0 = stop_job(result0["job_id"])
+    print(f"结果：{json.dumps(stop_result0, indent=2, ensure_ascii=False)}")
+    
+    time.sleep(10)  # 等待作业停止处理
+    
+    print("停止第二个作业（job1）...")
     stop_result1 = stop_job(result1["job_id"])
     print(f"结果：{json.dumps(stop_result1, indent=2, ensure_ascii=False)}")
     
-    time.sleep(2)  # 等待作业停止处理
+    time.sleep(10)  # 等待作业停止处理
     
-    print("停止第二个作业...")
+    print("停止第三个作业（job2）...")
     stop_result2 = stop_job(result3["job_id"])
     print(f"结果：{json.dumps(stop_result2, indent=2, ensure_ascii=False)}")
 

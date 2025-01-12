@@ -6,13 +6,78 @@ import uuid
 import json
 from typing import Dict, List
 from flask import Flask, request, jsonify
-from enum import Enum
+from models import AllocationStatus, TaskStatus, TaskType
 
-class AllocationStatus(Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
+class Task:
+    def __init__(self, name: str, resources: Dict, config: Dict):
+        self.name = name
+        self.resources = resources
+        self.config = config
+        self.status = TaskStatus.PENDING
+        self.start_time = None
+        self.end_time = None
+        self.thread = None
+        self.process = None  # 存储进程ID或容器ID
+        self.task_type = TaskType.CONTAINER if config.get("image") else TaskType.PROCESS
+        self.exit_code = None  # 添加退出码字段
+
+    def update_status(self) -> bool:
+        """更新任务的实际运行状态"""
+        if not self.process:
+            return False
+
+        try:
+            if self.task_type == TaskType.PROCESS:
+                try:
+                    process = psutil.Process(self.process)
+                    if process.status() == psutil.STATUS_RUNNING:
+                        self.status = TaskStatus.RUNNING
+                        return True
+                    elif process.status() in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
+                        self.status = TaskStatus.FAILED
+                        self.exit_code = process.wait(timeout=0)
+                        self.end_time = time.time()
+                        return True
+                except psutil.NoSuchProcess:
+                    if self.status == TaskStatus.RUNNING:
+                        self.status = TaskStatus.FAILED
+                        self.end_time = time.time()
+                    return False
+                    
+            elif self.task_type == TaskType.CONTAINER:
+                import docker
+                client = docker.from_env()
+                try:
+                    container = client.containers.get(self.process)
+                    if container.status == "running":
+                        self.status = TaskStatus.RUNNING
+                        return True
+                    elif container.status == "exited":
+                        container_info = container.attrs
+                        self.exit_code = container_info["State"]["ExitCode"]
+                        if self.exit_code == 0:
+                            self.status = TaskStatus.COMPLETE
+                        else:
+                            self.status = TaskStatus.FAILED
+                        self.end_time = time.time()
+                        return True
+                    else:
+                        # 其他状态（如created, paused等）
+                        print(f"[Agent] 容器 {self.process} 状态: {container.status}")
+                        self.status = TaskStatus.PENDING
+                        return True
+                except docker.errors.NotFound:
+                    if self.status == TaskStatus.RUNNING:
+                        self.status = TaskStatus.FAILED
+                        self.end_time = time.time()
+                    return False
+                    
+        except Exception as e:
+            print(f"[Agent] 更新任务状态时出错: {e}")
+            if self.status == TaskStatus.RUNNING:
+                self.status = TaskStatus.FAILED
+                self.end_time = time.time()
+            return False
 
 class TaskAllocation:
     def __init__(self, allocation_id: str, job_id: str, task_group: str):
@@ -22,6 +87,45 @@ class TaskAllocation:
         self.status = AllocationStatus.PENDING
         self.start_time = None
         self.end_time = None
+        self.tasks: Dict[str, Task] = {}  # 存储任务名称到Task对象的映射
+
+    def update_status(self):
+        """更新分配的状态"""
+        # 如果没有任务，保持PENDING状态
+        if not self.tasks:
+            return
+
+        # 更新所有任务的状态
+        all_complete = True
+        any_failed = False
+        any_running = False
+        
+        for task in self.tasks.values():
+            task.update_status()
+            
+            if task.status == TaskStatus.FAILED:
+                any_failed = True
+            elif task.status == TaskStatus.RUNNING:
+                any_running = True
+                all_complete = False
+            elif task.status != TaskStatus.COMPLETE:
+                all_complete = False
+
+        # 根据任务状态更新分配状态
+        if any_failed:
+            self.status = AllocationStatus.FAILED
+            if not self.end_time:
+                self.end_time = time.time()
+        elif all_complete:
+            self.status = AllocationStatus.COMPLETE
+            if not self.end_time:
+                self.end_time = time.time()
+        elif any_running:
+            self.status = AllocationStatus.RUNNING
+            if not self.start_time:
+                self.start_time = time.time()
+        else:
+            self.status = AllocationStatus.PENDING
 
 class NodeAgent:
     def __init__(self, server_url: str, region: str, agent_port: int):
@@ -32,6 +136,8 @@ class NodeAgent:
         self.heartbeat_interval = 5  # 心跳间隔（秒）
         self.agent_port = agent_port
         self.allocations: Dict[str, TaskAllocation] = {}  # 存储分配ID到分配对象的映射
+        self.task_monitor_thread = threading.Thread(target=self._monitor_tasks, daemon=True)
+        self.task_monitor_thread.start()
         
         # 创建Flask应用
         self.app = Flask(__name__)
@@ -56,17 +162,26 @@ class NodeAgent:
                 task_group_data["name"]
             )
             
+            # 为每个任务创建Task对象
+            for task_data in task_group_data["tasks"]:
+                task = Task(
+                    task_data["name"],
+                    task_data["resources"],
+                    task_data["config"]
+                )
+                allocation.tasks[task.name] = task
+            
             # 存储分配信息
             self.allocations[allocation.id] = allocation
             
             # 为每个任务启动一个执行线程
-            for task in task_group_data["tasks"]:
-                thread = threading.Thread(
+            for task in allocation.tasks.values():
+                task.thread = threading.Thread(
                     target=self.execute_task,
                     args=(allocation, task),
                     daemon=True
                 )
-                thread.start()
+                task.thread.start()
             
             return jsonify({
                 "message": "Allocation accepted",
@@ -79,13 +194,23 @@ class NodeAgent:
             if not allocation:
                 return jsonify({"error": "Allocation not found"}), 404
             
+            # 收集所有任务的状态
+            tasks_status = {
+                task_name: {
+                    "status": task.status.value,
+                    "start_time": task.start_time,
+                    "end_time": task.end_time
+                } for task_name, task in allocation.tasks.items()
+            }
+            
             return jsonify({
                 "allocation_id": allocation.id,
                 "job_id": allocation.job_id,
                 "task_group": allocation.task_group,
                 "status": allocation.status.value,
                 "start_time": allocation.start_time,
-                "end_time": allocation.end_time
+                "end_time": allocation.end_time,
+                "tasks": tasks_status
             }), 200
 
         @self.app.route('/allocations/<allocation_id>', methods=['DELETE'])
@@ -106,32 +231,70 @@ class NodeAgent:
                 "message": f"Allocation {allocation_id} stopped and removed"
             }), 200
 
-    def execute_task(self, allocation: TaskAllocation, task: Dict):
+    def execute_task(self, allocation: TaskAllocation, task: Task):
         """执行单个任务"""
         try:
-            print(f"[Agent] 开始执行任务: {allocation.id}/{task['name']}")
+            print(f"[Agent] 开始执行任务: {allocation.id}/{task.name}")
             
             # 更新任务状态
+            task.status = TaskStatus.RUNNING
+            task.start_time = time.time()
+            allocation.start_time = allocation.start_time or task.start_time
             allocation.status = AllocationStatus.RUNNING
-            if not hasattr(allocation, 'start_time'):
-                allocation.start_time = time.time()
             
-            # 这里模拟任务执行
-            # 实际应用中，这里应该根据task的config来执行具体的任务
-            print(f"[Agent] 任务配置: {json.dumps(task['config'], indent=2)}")
-            print(f"[Agent] 资源分配: CPU {task['resources']['cpu']}, 内存 {task['resources']['memory']}MB")
-            time.sleep(10)  # 模拟任务执行时间
-            
-            print(f"[Agent] 任务执行完成: {allocation.id}/{task['name']}")
+            if task.task_type == TaskType.CONTAINER:
+                # 使用Docker API启动容器
+                import docker
+                client = docker.from_env()
+                container = client.containers.run(
+                    task.config["image"],
+                    detach=True,
+                    ports={f"{task.config['port']}/tcp": task.config['port']} if "port" in task.config else None,
+                    mem_limit=f"{task.resources['memory']}m",
+                    cpu_quota=int(task.resources['cpu'] * 1000),  # 转换为微秒配额
+                    cpu_period=100000  # 默认的CPU周期为100ms
+                )
+                task.process = container.id
+                print(f"[Agent] 容器已启动: {container.id}")
+                
+            else:
+                # 启动普通进程
+                import subprocess
+                process = subprocess.Popen(
+                    task.config["command"],
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                task.process = process.pid
+                print(f"[Agent] 进程已启动: {process.pid}")
             
         except Exception as e:
-            print(f"[Agent] 任务执行失败: {allocation.id}/{task['name']}, 错误: {e}")
+            print(f"[Agent] 任务执行失败: {allocation.id}/{task.name}, 错误: {e}")
+            task.status = TaskStatus.FAILED
+            task.end_time = time.time()
             allocation.status = AllocationStatus.FAILED
+
+    def _monitor_tasks(self):
+        """监控所有任务的状态"""
+        while True:
+            try:
+                for allocation_id, allocation in list(self.allocations.items()):
+                    # 更新分配状态
+                    allocation.update_status()
+                    
+                    # 打印任务状态
+                    print(f"\n[Agent] 分配 {allocation_id} 的任务状态 ({allocation.status.value}):")
+                    for task_name, task in allocation.tasks.items():
+                        status_info = f"{task.status.value}"
+                        if task.exit_code is not None:
+                            status_info += f" (退出码: {task.exit_code})"
+                        print(f"  - {task_name}: {status_info}")
             
-        # 检查是否所有任务都完成了
-        if allocation.status != AllocationStatus.FAILED:
-            allocation.status = AllocationStatus.COMPLETE
-            allocation.end_time = time.time()
+            except Exception as e:
+                print(f"[Agent] 监控任务时出错: {e}")
+            
+            time.sleep(5)  # 每5秒检查一次
 
     def get_resources(self) -> Dict:
         """获取当前节点的资源使用情况"""
@@ -172,11 +335,30 @@ class NodeAgent:
 
     def send_heartbeat(self):
         """发送心跳信息"""
+        # 收集所有分配的状态信息
+        allocations_status = {}
+        for allocation_id, allocation in self.allocations.items():
+            tasks_status = {}
+            for task_name, task in allocation.tasks.items():
+                tasks_status[task_name] = {
+                    "status": task.status.value,
+                    "start_time": task.start_time,
+                    "end_time": task.end_time
+                }
+            
+            allocations_status[allocation_id] = {
+                "status": allocation.status.value,
+                "start_time": allocation.start_time,
+                "end_time": allocation.end_time,
+                "tasks": tasks_status
+            }
+
         heartbeat_data = {
             "node_id": self.node_id,
             "resources": self.get_resources(),
             "healthy": self.healthy,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "allocations": allocations_status
         }
         
         try:
@@ -210,10 +392,47 @@ class NodeAgent:
     def stop_tasks(self, allocation: TaskAllocation):
         """停止分配相关的所有任务"""
         print(f"[Agent] 正在停止分配 {allocation.id} 的任务")
-        # TODO: 实际环境中，这里需要调用相应的容器运行时（如Docker）来停止任务
-        allocation.status = AllocationStatus.COMPLETE
+        
+        for task in allocation.tasks.values():
+            try:
+                if not task.process:
+                    continue
+                    
+                if task.task_type == TaskType.CONTAINER:
+                    # 停止容器
+                    import docker
+                    client = docker.from_env()
+                    try:
+                        container = client.containers.get(task.process)
+                        container.stop(timeout=10)  # 给容器10秒的优雅停止时间
+                        print(f"[Agent] 容器 {task.process} 已停止")
+                    except docker.errors.NotFound:
+                        print(f"[Agent] 容器 {task.process} 不存在")
+                        
+                else:
+                    # 停止进程
+                    try:
+                        process = psutil.Process(task.process)
+                        process.terminate()  # 先尝试优雅终止
+                        try:
+                            process.wait(timeout=5)  # 等待进程终止
+                        except psutil.TimeoutExpired:
+                            process.kill()  # 如果等待超时，强制终止
+                        print(f"[Agent] 进程 {task.process} 已停止")
+                    except psutil.NoSuchProcess:
+                        print(f"[Agent] 进程 {task.process} 不存在")
+                
+                task.status = TaskStatus.COMPLETE
+                task.end_time = time.time()
+                
+            except Exception as e:
+                print(f"[Agent] 停止任务 {task.name} 时出错: {e}")
+                task.status = TaskStatus.FAILED
+                task.end_time = time.time()
+        
+        allocation.status = AllocationStatus.STOPPED  # 更新为 STOPPED 状态
         allocation.end_time = time.time()
-        print(f"[Agent] 分配 {allocation.id} 的任务已停止")
+        print(f"[Agent] 分配 {allocation.id} 的所有任务已停止")
 
 if __name__ == "__main__":
     # 示例使用
