@@ -26,6 +26,14 @@
           >
             停止
           </el-button>
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            @click="handleDeleteJob(job.job_id)"
+          >
+            删除
+          </el-button>
         </div>
       </div>
 
@@ -88,6 +96,22 @@
         </el-table>
       </div>
     </div>
+
+    <!-- 删除确认对话框 -->
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="警告"
+      width="30%"
+      :close-on-click-modal="false"
+    >
+      <span>此操作将永久删除该作业及其所有相关资源，是否继续？</span>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="deleteDialogVisible = false">取消</el-button>
+          <el-button type="danger" @click="confirmDelete">确定</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -96,10 +120,15 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useJobStore } from '../stores/jobs'
 import type { JobStatus, AllocationStatus } from '../types'
+import ElementPlus from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import 'element-plus/dist/index.css'
 
 const jobStore = useJobStore()
 const { jobs, loading } = storeToRefs(jobStore)
 const timer = ref<number>()
+const deleteDialogVisible = ref(false)
+const jobToDelete = ref<string | null>(null)
 
 // 获取状态对应的类型
 function getStatusType(status: JobStatus) {
@@ -161,6 +190,28 @@ function getTaskStatusType(status: string) {
     failed: 'danger'
   }
   return types[status] || 'info'
+}
+
+// 删除作业
+async function handleDeleteJob(jobId: string) {
+  jobToDelete.value = jobId
+  deleteDialogVisible.value = true
+}
+
+// 确认删除
+async function confirmDelete() {
+  try {
+    if (!jobToDelete.value) return
+    
+    console.log('用户确认删除，开始调用删除接口')
+    await jobStore.deleteJob(jobToDelete.value)
+    console.log('删除接口调用成功')
+    ElMessage.success('作业删除成功')
+    deleteDialogVisible.value = false
+  } catch (error) {
+    console.error('删除作业时出错:', error)
+    ElMessage.error('删除作业失败')
+  }
 }
 
 // 组件挂载时开始定时获取数据
@@ -252,5 +303,17 @@ onUnmounted(() => {
 
 .task-table {
   margin: 10px;
+}
+
+.job-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }
 </style> 

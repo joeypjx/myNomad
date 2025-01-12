@@ -262,23 +262,23 @@ def main():
     
     time.sleep(10)  # 等待作业更新处理
     
-    # 测试用例5：停止作业
-    print("\n测试5：停止作业")
-    print("停止第一个作业（job0）...")
-    stop_result0 = stop_job(result0["job_id"])
-    print(f"结果：{json.dumps(stop_result0, indent=2, ensure_ascii=False)}")
+    # # 测试用例5：停止作业
+    # print("\n测试5：停止作业")
+    # print("停止第一个作业（job0）...")
+    # stop_result0 = stop_job(result0["job_id"])
+    # print(f"结果：{json.dumps(stop_result0, indent=2, ensure_ascii=False)}")
     
-    time.sleep(10)  # 等待作业停止处理
+    # time.sleep(10)  # 等待作业停止处理
     
-    print("停止第二个作业（job1）...")
-    stop_result1 = stop_job(result1["job_id"])
-    print(f"结果：{json.dumps(stop_result1, indent=2, ensure_ascii=False)}")
+    # print("停止第二个作业（job1）...")
+    # stop_result1 = stop_job(result1["job_id"])
+    # print(f"结果：{json.dumps(stop_result1, indent=2, ensure_ascii=False)}")
     
-    time.sleep(10)  # 等待作业停止处理
+    # time.sleep(10)  # 等待作业停止处理
     
-    print("停止第三个作业（job2）...")
-    stop_result2 = stop_job(result3["job_id"])
-    print(f"结果：{json.dumps(stop_result2, indent=2, ensure_ascii=False)}")
+    # print("停止第三个作业（job2）...")
+    # stop_result2 = stop_job(result3["job_id"])
+    # print(f"结果：{json.dumps(stop_result2, indent=2, ensure_ascii=False)}")
 
 if __name__ == "__main__":
     try:

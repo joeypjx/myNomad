@@ -171,5 +171,26 @@ def get_all_nodes():
         "count": len(nodes_with_allocations)
     }), 200
 
+@app.route('/jobs/<job_id>/delete', methods=['POST'])
+def delete_job(job_id):
+    """删除作业及其所有相关资源"""
+    print(f"\n[Server] 收到删除作业请求: {job_id}")
+    
+    # 验证作业是否存在
+    job = node_manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "作业不存在"}), 404
+    
+    # 删除作业及其相关资源
+    success = node_manager.delete_job(job_id)
+    if success:
+        return jsonify({
+            "message": f"作业 {job_id} 及其相关资源已删除"
+        }), 200
+    else:
+        return jsonify({
+            "error": f"删除作业 {job_id} 失败"
+        }), 500
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8500) 

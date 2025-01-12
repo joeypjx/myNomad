@@ -759,3 +759,46 @@ class NodeManager:
         except Exception as e:
             print(f"[NodeManager] 检查资源时出错: {e}")
             return False 
+
+    def delete_job(self, job_id: str) -> bool:
+        """删除作业及其所有相关资源
+        1. 停止作业的所有任务
+        2. 删除所有相关的task_status记录
+        3. 删除所有相关的allocation记录
+        4. 删除job记录
+        """
+        try:
+            print(f"\n[NodeManager] 开始删除作业: {job_id}")
+            
+            # 首先停止作业的所有任务
+            self.stop_job(job_id)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取所有相关的allocation_ids
+            cursor.execute('SELECT allocation_id FROM allocations WHERE job_id = ?', (job_id,))
+            allocation_ids = [row[0] for row in cursor.fetchall()]
+            
+            # 删除相关的task_status记录
+            for allocation_id in allocation_ids:
+                cursor.execute('DELETE FROM task_status WHERE allocation_id = ?', (allocation_id,))
+                print(f"[NodeManager] 删除allocation {allocation_id}的任务状态记录")
+            
+            # 删除allocation记录
+            cursor.execute('DELETE FROM allocations WHERE job_id = ?', (job_id,))
+            print(f"[NodeManager] 删除作业 {job_id} 的所有分配记录")
+            
+            # 删除job记录
+            cursor.execute('DELETE FROM jobs WHERE job_id = ?', (job_id,))
+            print(f"[NodeManager] 删除作业 {job_id} 记录")
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 作业 {job_id} 及其相关资源已完全删除")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 删除作业时出错: {e}")
+            return False 
