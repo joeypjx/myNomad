@@ -1,10 +1,7 @@
 <template>
   <div class="job-list">
-    <!-- 调试信息 -->
-    <div class="debug-info">
-      <p>Loading: {{ loading }}</p>
-      <p>Jobs count: {{ jobs.length }}</p>
-    </div>
+    <!-- 加载状态 -->
+    <el-loading v-if="loading" :fullscreen="true" text="加载中..." />
 
     <!-- 作业列表 -->
     <div v-for="job in jobs" :key="job.job_id" class="job-card">
@@ -171,12 +168,23 @@ function getAllocationStatusType(status: AllocationStatus) {
 // 格式化持续时间
 function formatDuration(startTime: number | null, endTime: number | null): string {
   if (!startTime) return '-'
-  const end = endTime || Date.now()
-  const duration = end - startTime
+  
+  // 将时间戳转换为毫秒
+  const start = startTime * 1000  // 假设输入是秒级时间戳
+  const end = endTime ? endTime * 1000 : Date.now()
+  const duration = end - start
+  
+  // 如果持续时间为负数，返回 '-'
+  if (duration < 0) return '-'
+  
   const seconds = Math.floor(duration / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
   
+  if (days > 0) {
+    return `${days}天 ${hours % 24}小时`
+  }
   if (hours > 0) {
     return `${hours}小时 ${minutes % 60}分钟`
   }
@@ -261,13 +269,6 @@ onUnmounted(() => {
 <style scoped>
 .job-list {
   padding: 20px;
-}
-
-.debug-info {
-  margin-bottom: 20px;
-  padding: 10px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
 }
 
 .job-card {
