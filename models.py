@@ -7,10 +7,14 @@ class EvaluationStatus(Enum):
     FAILED = "failed"
 
 class JobStatus(Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETE = "complete"
-    FAILED = "failed"
+    PENDING = "pending"      # 作业已提交，但尚未被调度器处理
+    RUNNING = "running"      # 作业已被调度，任务正在运行
+    COMPLETE = "complete"    # 作业的所有任务都已成功完成
+    FAILED = "failed"        # 作业的某些任务失败
+    LOST = "lost"           # 作业的任务在运行过程中丢失（节点失联）
+    DEAD = "dead"           # 作业已被显式停止
+    DEGRADED = "degraded"   # 作业的部分任务失败，但仍有部分任务在运行
+    BLOCKED = "blocked"     # 作业无法被调度，通常是由于资源不足或约束条件不满足
 
 class TaskStatus(Enum):
     PENDING = "pending"    # 任务已创建但尚未开始

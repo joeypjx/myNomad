@@ -296,6 +296,9 @@ class NodeManager:
             conn.commit()
             conn.close()
             print(f"[NodeManager] 更新分配状态成功: {allocation.id}")
+            
+            # 更新作业状态
+            self.update_job_status(allocation.job_id)
             return True
         except Exception as e:
             print(f"[NodeManager] 更新分配状态时出错: {e}")
@@ -399,7 +402,7 @@ class NodeManager:
         1. 获取作业的所有分配
         2. 通知相关节点停止任务
         3. 删除分配记录
-        4. 更新作业状态
+        4. 更新作业状态为 DEAD
         """
         try:
             print(f"\n[NodeManager] 开始停止作业: {job_id}")
@@ -422,14 +425,14 @@ class NodeManager:
                 # 无论通知成功与否，都删除分配记录（不再重复通知agent）
                 self.delete_allocation(allocation["allocation_id"], notify_agent=False)
             
-            # 更新作业状态
+            # 更新作业状态为 DEAD
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE jobs 
                 SET status = ? 
                 WHERE job_id = ?
-            ''', (JobStatus.COMPLETE.value, job_id))
+            ''', (JobStatus.DEAD.value, job_id))
             
             conn.commit()
             conn.close()
@@ -603,3 +606,110 @@ class NodeManager:
         except Exception as e:
             print(f"[NodeManager] 获取作业信息时出错: {e}")
             return None 
+
+    def update_job_status(self, job_id: str) -> bool:
+        """
+        更新作业状态
+        根据作业的所有分配状态来确定作业的整体状态
+        """
+        try:
+            # 获取作业的所有分配
+            allocations = self.get_job_allocations(job_id)
+            if not allocations:
+                return True
+
+            # 统计各种状态的分配数量
+            status_counts = {
+                "pending": 0,
+                "running": 0,
+                "complete": 0,
+                "failed": 0,
+                "lost": 0,
+                "stopped": 0
+            }
+
+            for alloc in allocations:
+                status = alloc["status"].lower()
+                if status in status_counts:
+                    status_counts[status] += 1
+
+            total_allocations = len(allocations)
+            new_status = None
+
+            # 确定作业的新状态
+            if status_counts["lost"] == total_allocations:
+                new_status = JobStatus.LOST
+            elif status_counts["failed"] == total_allocations:
+                new_status = JobStatus.FAILED
+            elif status_counts["running"] > 0:
+                if status_counts["failed"] > 0 or status_counts["lost"] > 0:
+                    new_status = JobStatus.DEGRADED
+                else:
+                    new_status = JobStatus.RUNNING
+            elif status_counts["pending"] == total_allocations:
+                # 检查是否因资源不足而被阻塞
+                if not self._has_sufficient_resources(job_id):
+                    new_status = JobStatus.BLOCKED
+                else:
+                    new_status = JobStatus.PENDING
+            elif status_counts["complete"] + status_counts["stopped"] == total_allocations:
+                new_status = JobStatus.COMPLETE
+
+            if new_status:
+                # 更新数据库中的作业状态
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE jobs 
+                    SET status = ? 
+                    WHERE job_id = ?
+                ''', (new_status.value, job_id))
+                conn.commit()
+                conn.close()
+                print(f"[NodeManager] 作业 {job_id} 状态更新为: {new_status.value}")
+            
+            return True
+
+        except Exception as e:
+            print(f"[NodeManager] 更新作业状态时出错: {e}")
+            return False
+
+    def _has_sufficient_resources(self, job_id: str) -> bool:
+        """
+        检查是否有足够的资源来运行作业
+        """
+        try:
+            # 获取作业信息
+            job_info = self.get_job_info(job_id)
+            if not job_info:
+                return False
+
+            # 获取所有健康的节点
+            healthy_nodes = [node for node in self.nodes.values() if node.healthy]
+            if not healthy_nodes:
+                return False
+
+            # 检查每个任务组的资源需求
+            for task_group in job_info["task_groups"]:
+                total_cpu = 0
+                total_memory = 0
+                for task in task_group["tasks"]:
+                    total_cpu += task["resources"].get("cpu", 0)
+                    total_memory += task["resources"].get("memory", 0)
+
+                # 检查是否有节点满足资源要求
+                resource_satisfied = False
+                for node in healthy_nodes:
+                    if (node.available_resources.get("cpu", 0) >= total_cpu and 
+                        node.available_resources.get("memory", 0) >= total_memory):
+                        resource_satisfied = True
+                        break
+
+                if not resource_satisfied:
+                    return False
+
+            return True
+
+        except Exception as e:
+            print(f"[NodeManager] 检查资源时出错: {e}")
+            return False 
