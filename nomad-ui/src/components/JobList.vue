@@ -28,6 +28,14 @@
           </el-button>
           <el-button
             size="small"
+            type="success"
+            :disabled="job.status !== 'dead'"
+            @click="handleRestartJob(job.job_id)"
+          >
+            重启
+          </el-button>
+          <el-button
+            size="small"
             type="danger"
             plain
             @click="handleDeleteJob(job.job_id)"
@@ -123,6 +131,8 @@ import type { JobStatus, AllocationStatus } from '../types'
 import ElementPlus from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import 'element-plus/dist/index.css'
+import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-message-box.css'
 
 const jobStore = useJobStore()
 const { jobs, loading } = storeToRefs(jobStore)
@@ -211,6 +221,18 @@ async function confirmDelete() {
   } catch (error) {
     console.error('删除作业时出错:', error)
     ElMessage.error('删除作业失败')
+  }
+}
+
+// 重启作业
+async function handleRestartJob(jobId: string) {
+  try {
+    console.log('开始重启作业:', jobId)
+    await jobStore.restartJob(jobId)
+    ElMessage.success('作业重启成功')
+  } catch (error) {
+    console.error('重启作业失败:', error)
+    ElMessage.error('重启作业失败')
   }
 }
 

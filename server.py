@@ -192,5 +192,39 @@ def delete_job(job_id):
             "error": f"删除作业 {job_id} 失败"
         }), 500
 
+@app.route('/jobs/<job_id>/restart', methods=['POST'])
+def restart_job(job_id):
+    """重启已停止的作业"""
+    print(f"\n[Server] 收到重启作业请求: {job_id}")
+    
+    # 验证作业是否存在
+    job = node_manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "作业不存在"}), 404
+    
+    # 验证作业状态是否为 dead
+    if job.get("status") != "dead":
+        return jsonify({"error": "只能重启已停止的作业"}), 400
+    
+    # 创建评估，但使用原有的作业配置
+    job_config = {
+        "task_groups": job["task_groups"],
+        "constraints": job.get("constraints", {})
+    }
+    
+    evaluation = scheduler.create_evaluation(job_config, job_id=job_id)
+    if not evaluation:
+        return jsonify({"error": "无法创建评估"}), 400
+    
+    # 将评估加入队列
+    leader.enqueue_evaluation(evaluation)
+    print(f"[Server] 作业重启评估已加入队列: {evaluation.id}")
+    
+    return jsonify({
+        "job_id": job_id,
+        "evaluation_id": evaluation.id,
+        "message": "作业重启评估已加入队列"
+    })
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8500) 

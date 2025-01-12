@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getAllJobs, stopJob, deleteJob } from '../api/jobs'
+import { getAllJobs, stopJob, deleteJob, restartJob } from '../api/jobs'
 import type { Job } from '../types'
 
 export const useJobStore = defineStore('jobs', () => {
@@ -47,11 +47,24 @@ export const useJobStore = defineStore('jobs', () => {
         }
     }
 
+    // 重启作业
+    async function restartJobById(jobId: string) {
+        try {
+            await restartJob(jobId)
+            // 立即刷新作业列表
+            await fetchJobs()
+        } catch (error) {
+            console.error('重启作业失败:', error)
+            throw error
+        }
+    }
+
     return {
         jobs,
         loading,
         fetchJobs,
         stopJob: stopJobById,
-        deleteJob: deleteJobById
+        deleteJob: deleteJobById,
+        restartJob: restartJobById
     }
 }) 

@@ -38,4 +38,17 @@ export async function deleteJob(jobId: string) {
         console.error('API: 删除作业请求失败:', error)
         throw error
     }
+}
+
+// 重启作业
+export async function restartJob(jobId: string) {
+    try {
+        console.log(`API: 开始重启作业 ${jobId}...`)
+        const response = await axios.post<{message: string}>(`${API_BASE_URL}/jobs/${jobId}/restart`)
+        console.log('API: 重启作业响应:', response.data)
+        return response.data
+    } catch (error) {
+        console.error('API: 重启作业请求失败:', error)
+        throw error
+    }
 } 
