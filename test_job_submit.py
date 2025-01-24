@@ -38,8 +38,8 @@ def main():
                     {
                         "name": "my_script",
                         "resources": {
-                            "cpu": 300,
-                            "memory": 512
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "command": "python my_script.py"
@@ -68,8 +68,8 @@ def main():
                     {
                         "name": "nginx",
                         "resources": {
-                            "cpu": 300,
-                            "memory": 512
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "nginx:latest",
@@ -103,8 +103,8 @@ def main():
                     {
                         "name": "nginx",
                         "resources": {
-                            "cpu": 500,  # 增加CPU需求
-                            "memory": 1024  # 增加内存需求
+                            "cpu": 0,  # 增加CPU需求
+                            "memory": 0  # 增加内存需求
                         },
                         "config": {
                             "image": "nginx:latest",
@@ -114,8 +114,8 @@ def main():
                     {
                         "name": "logger",  # 添加新任务
                         "resources": {
-                            "cpu": 100,
-                            "memory": 256
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "fluentd:latest"
@@ -144,8 +144,8 @@ def main():
                     {
                         "name": "nginx",
                         "resources": {
-                            "cpu": 200,
-                            "memory": 256
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "nginx:latest",
@@ -155,8 +155,8 @@ def main():
                     {
                         "name": "node",
                         "resources": {
-                            "cpu": 100,
-                            "memory": 256
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "node:latest",
@@ -171,8 +171,8 @@ def main():
                     {
                         "name": "mysql",
                         "resources": {
-                            "cpu": 500,
-                            "memory": 1024
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "mysql:latest",
@@ -202,8 +202,8 @@ def main():
                     {
                         "name": "nginx",
                         "resources": {
-                            "cpu": 300,  # 增加CPU需求
-                            "memory": 512  # 增加内存需求
+                            "cpu": 0,  # 增加CPU需求
+                            "memory": 0  # 增加内存需求
                         },
                         "config": {
                             "image": "nginx:latest",
@@ -213,8 +213,8 @@ def main():
                     {
                         "name": "node",
                         "resources": {
-                            "cpu": 200,  # 增加CPU需求
-                            "memory": 512  # 增加内存需求
+                            "cpu": 0,  # 增加CPU需求
+                            "memory": 0  # 增加内存需求
                         },
                         "config": {
                             "image": "node:latest",
@@ -229,8 +229,8 @@ def main():
                     {
                         "name": "mysql",
                         "resources": {
-                            "cpu": 500,
-                            "memory": 1024
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "mysql:latest",
@@ -240,8 +240,8 @@ def main():
                     {
                         "name": "backup",  # 添加新任务
                         "resources": {
-                            "cpu": 100,
-                            "memory": 256
+                            "cpu": 0,
+                            "memory": 0
                         },
                         "config": {
                             "image": "busybox:latest",
