@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getAllJobs, stopJob, deleteJob, restartJob } from '../api/jobs'
+import { getAllJobs, stopJob, deleteJob, restartJob, submitJob, updateJob } from '../api/jobs'
 import type { Job } from '../types'
 
 export const useJobStore = defineStore('jobs', () => {
@@ -17,6 +17,34 @@ export const useJobStore = defineStore('jobs', () => {
             console.error('获取作业列表失败:', error)
         } finally {
             loading.value = false
+        }
+    }
+
+    // 提交新作业
+    async function submitNewJob(jobConfig: any) {
+        try {
+            console.log('Store: 开始提交新作业')
+            const result = await submitJob(jobConfig)
+            console.log('Store: 提交作业成功，开始刷新列表')
+            await fetchJobs()
+            return result
+        } catch (error) {
+            console.error('Store: 提交作业失败:', error)
+            throw error
+        }
+    }
+
+    // 更新作业
+    async function updateExistingJob(jobId: string, jobConfig: any) {
+        try {
+            console.log('Store: 开始更新作业:', jobId)
+            const result = await updateJob(jobId, jobConfig)
+            console.log('Store: 更新作业成功，开始刷新列表')
+            await fetchJobs()
+            return result
+        } catch (error) {
+            console.error('Store: 更新作业失败:', error)
+            throw error
         }
     }
 
@@ -65,6 +93,8 @@ export const useJobStore = defineStore('jobs', () => {
         fetchJobs,
         stopJob: stopJobById,
         deleteJob: deleteJobById,
-        restartJob: restartJobById
+        restartJob: restartJobById,
+        submitJob: submitNewJob,
+        updateJob: updateExistingJob
     }
 }) 

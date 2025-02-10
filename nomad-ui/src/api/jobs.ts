@@ -40,6 +40,32 @@ export async function deleteJob(jobId: string) {
     }
 }
 
+// 提交新作业
+export async function submitJob(jobConfig: any) {
+    try {
+        console.log('API: 开始提交新作业...')
+        const response = await axios.post<{job_id: string, evaluation_id: string}>(`${API_BASE_URL}/jobs`, jobConfig)
+        console.log('API: 提交作业响应:', response.data)
+        return response.data
+    } catch (error) {
+        console.error('API: 提交作业请求失败:', error)
+        throw error
+    }
+}
+
+// 更新作业
+export async function updateJob(jobId: string, jobConfig: any) {
+    try {
+        console.log(`API: 开始更新作业 ${jobId}...`)
+        const response = await axios.put<{job_id: string, evaluation_id: string}>(`${API_BASE_URL}/jobs/${jobId}`, jobConfig)
+        console.log('API: 更新作业响应:', response.data)
+        return response.data
+    } catch (error) {
+        console.error('API: 更新作业请求失败:', error)
+        throw error
+    }
+}
+
 // 重启作业
 export async function restartJob(jobId: string) {
     try {

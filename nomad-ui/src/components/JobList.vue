@@ -1,5 +1,10 @@
 <template>
   <div class="job-list">
+    <!-- 顶部操作栏 -->
+    <div class="top-actions">
+      <el-button type="primary" @click="showSubmitDialog()">提交新作业</el-button>
+    </div>
+
     <!-- 加载状态 -->
     <el-loading v-if="loading" :fullscreen="true" text="加载中..." />
 
@@ -30,6 +35,13 @@
             @click="handleRestartJob(job.job_id)"
           >
             重启
+          </el-button>
+          <el-button
+            size="small"
+            type="primary"
+            @click="showSubmitDialog(job)"
+          >
+            更新
           </el-button>
           <el-button
             size="small"
@@ -117,6 +129,43 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 提交作业对话框 -->
+    <el-dialog
+      v-model="submitDialogVisible"
+      :title="isUpdate ? '更新作业' : '提交新作业'"
+      width="60%"
+      :close-on-click-modal="false"
+      :modal="true"
+      :lock-scroll="true"
+      :show-close="true"
+      :center="true"
+      :fullscreen="false"
+      class="submit-dialog"
+      top="0"
+    >
+      <div class="submit-form">
+        <el-form>
+          <el-form-item v-if="isUpdate" label="作业ID">
+            <el-input v-model="jobId" disabled />
+          </el-form-item>
+          <el-form-item label="作业配置">
+            <el-input
+              v-model="jobConfig"
+              type="textarea"
+              :rows="15"
+              placeholder="请输入JSON格式的作业配置"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="submitDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmitJob">确定</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -125,17 +174,20 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useJobStore } from '../stores/jobs'
 import type { JobStatus, AllocationStatus } from '../types'
-import ElementPlus from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import 'element-plus/dist/index.css'
-import 'element-plus/theme-chalk/el-message.css'
-import 'element-plus/theme-chalk/el-message-box.css'
 
 const jobStore = useJobStore()
 const { jobs, loading } = storeToRefs(jobStore)
 const timer = ref<number>()
 const deleteDialogVisible = ref(false)
 const jobToDelete = ref<string | null>(null)
+
+// 提交作业相关的响应式变量
+const submitDialogVisible = ref(false)
+const isUpdate = ref(false)
+const jobId = ref('')
+const jobConfig = ref('')
 
 // 获取状态对应的类型
 function getStatusType(status: JobStatus) {
@@ -244,6 +296,71 @@ async function handleRestartJob(jobId: string) {
   }
 }
 
+// 显示提交对话框
+function showSubmitDialog(job?: any) {
+  isUpdate.value = !!job
+  if (job) {
+    jobId.value = job.job_id
+    // 构造作业配置
+    const config = {
+      task_groups: job.task_groups,
+      constraints: job.constraints
+    }
+    jobConfig.value = JSON.stringify(config, null, 2)
+  } else {
+    jobId.value = ''
+    jobConfig.value = JSON.stringify({
+      task_groups: [
+        {
+          name: "example_group",
+          tasks: [
+            {
+              name: "example_task",
+              resources: {
+                cpu: 100,
+                memory: 128
+              },
+              config: {
+                image: "nginx:latest",
+                port: 80
+              }
+            }
+          ]
+        }
+      ],
+      constraints: {
+        region: "us-west"
+      }
+    }, null, 2)
+  }
+  submitDialogVisible.value = true
+}
+
+// 处理作业提交
+async function handleSubmitJob() {
+  try {
+    let config
+    try {
+      config = JSON.parse(jobConfig.value)
+    } catch (e) {
+      ElMessage.error('JSON格式错误，请检查配置')
+      return
+    }
+    
+    if (isUpdate.value) {
+      await jobStore.updateJob(jobId.value, config)
+      ElMessage.success('作业更新成功')
+    } else {
+      await jobStore.submitJob(config)
+      ElMessage.success('作业提交成功')
+    }
+    submitDialogVisible.value = false
+  } catch (error) {
+    console.error('提交作业失败:', error)
+    ElMessage.error(isUpdate.value ? '更新作业失败' : '提交作业失败')
+  }
+}
+
 // 组件挂载时开始定时获取数据
 onMounted(() => {
   console.log('组件挂载，开始获取作业列表')
@@ -268,6 +385,16 @@ onUnmounted(() => {
 
 <style scoped>
 .job-list {
+  padding: 20px;
+}
+
+.top-actions {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.submit-form {
   padding: 20px;
 }
 
@@ -338,5 +465,50 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+:deep(.el-dialog) {
+  margin-top: 8vh !important;
+  position: fixed !important;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  margin: 0 !important;
+}
+
+:deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 20px;
+  flex: 1;
+}
+
+:deep(.el-dialog__header) {
+  padding: 20px;
+  margin: 0;
+  border-bottom: 1px solid #dcdfe6;
+}
+
+:deep(.el-dialog__footer) {
+  padding: 20px;
+  margin: 0;
+  border-top: 1px solid #dcdfe6;
+}
+
+:deep(.el-overlay) {
+  background-color: rgba(0, 0, 0, 0.5);
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: auto;
+  margin: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style> 
