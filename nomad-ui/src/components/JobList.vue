@@ -467,7 +467,7 @@ onUnmounted(() => {
   margin-top: 20px;
 }
 
-:deep(.el-dialog) {
+:deep(.ep-dialog) {
   margin-top: 8vh !important;
   position: fixed !important;
   top: 50%;
@@ -476,28 +476,29 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   margin: 0 !important;
+  background-color: white;
 }
 
-:deep(.el-dialog__body) {
+:deep(.ep-dialog__body) {
   max-height: 70vh;
   overflow-y: auto;
   padding: 20px;
   flex: 1;
 }
 
-:deep(.el-dialog__header) {
+:deep(.ep-dialog__header) {
   padding: 20px;
   margin: 0;
   border-bottom: 1px solid #dcdfe6;
 }
 
-:deep(.el-dialog__footer) {
+:deep(.ep-dialog__footer) {
   padding: 20px;
   margin: 0;
   border-top: 1px solid #dcdfe6;
 }
 
-:deep(.el-overlay) {
+:deep(.ep-overlay) {
   background-color: rgba(0, 0, 0, 0.5);
   position: fixed;
   top: 0;
