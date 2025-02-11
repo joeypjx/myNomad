@@ -134,27 +134,29 @@
     <el-dialog
       v-model="submitDialogVisible"
       :title="isUpdate ? '更新作业' : '提交新作业'"
-      width="60%"
+      width="80%"
       :close-on-click-modal="false"
       :modal="true"
       :lock-scroll="true"
       :show-close="true"
-      :center="true"
+      :center="false"
       :fullscreen="false"
       class="submit-dialog"
-      top="0"
+      top="5vh"
     >
       <div class="submit-form">
-        <el-form>
-          <el-form-item v-if="isUpdate" label="作业ID">
+        <el-form style="width: 100%">
+          <el-form-item v-if="isUpdate" label="作业ID" class="form-item">
             <el-input v-model="jobId" disabled />
           </el-form-item>
-          <el-form-item label="作业配置">
+          <el-form-item label="作业配置" class="form-item">
             <el-input
               v-model="jobConfig"
               type="textarea"
-              :rows="15"
+              :rows="20"
+              :autosize="{ minRows: 20, maxRows: 30 }"
               placeholder="请输入JSON格式的作业配置"
+              class="config-textarea"
             />
           </el-form-item>
         </el-form>
@@ -396,6 +398,17 @@ onUnmounted(() => {
 
 .submit-form {
   padding: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-item {
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.form-item :deep(.el-form-item__content) {
+  width: 100%;
 }
 
 .job-card {
@@ -476,6 +489,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   margin: 0 !important;
+  max-width: 1200px;
+  width: 80% !important;
   background-color: white;
 }
 
@@ -484,6 +499,8 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 20px;
   flex: 1;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 :deep(.ep-dialog__header) {
@@ -511,5 +528,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+:deep(.config-textarea) {
+  width: 100%;
+  font-family: monospace;
+}
+
+:deep(.config-textarea .el-textarea__inner) {
+  width: 100%;
+  font-family: monospace;
+  min-height: 400px !important;
 }
 </style> 
