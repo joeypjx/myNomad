@@ -43,6 +43,17 @@ class Scheduler:
 
         print(f"[Scheduler] 开始为作业 {job_id} 创建{'更新' if existing_job else '新'}评估")
         job = Job(job_id, job_data["task_groups"], job_data.get("constraints", {}))
+        
+        # 在创建评估时就持久化作业的基础状态 - 无论是新作业还是更新
+        job_data_to_save = {
+            "job_id": job_id,
+            "task_groups": job_data["task_groups"],
+            "constraints": job_data.get("constraints", {})
+            # 对于新作业，默认状态为PENDING；对于更新，保留现有状态
+        }
+        self.node_manager.submit_job(job_data_to_save)
+        print(f"[Scheduler] 已{'更新' if existing_job else '初始化'}作业 {job_id} 的基础数据")
+            
         nodes = self.node_manager.get_healthy_nodes()
         
         if not nodes:
@@ -86,24 +97,9 @@ class Scheduler:
         if success:
             print(f"[Scheduler] 评估 {evaluation.id} 成功，开始执行分配计划")
             
-            # 更新作业信息
-            job_data = {
-                "job_id": evaluation.job.id,
-                "task_groups": [
-                    {
-                        "name": group.name,
-                        "tasks": [
-                            {
-                                "name": task.name,
-                                "resources": task.resources,
-                                "config": task.config
-                            } for task in group.tasks
-                        ]
-                    } for group in evaluation.job.task_groups
-                ],
-                "constraints": evaluation.job.constraints
-            }
-            self.node_manager.submit_job(job_data)
+            # 更新作业状态 - 如有必要
+            # 注意：作业的初始状态已在create_evaluation中设置
+            # 如果需要更新作业状态，可以在这里添加逻辑
             
             # 提交完整分配计划（创建和删除）给allocation_executor执行
             self.allocation_executor.submit_plan(plan, allocations_to_delete)

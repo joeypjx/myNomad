@@ -11,7 +11,6 @@ class AllocationExecutor:
         self.node_manager = node_manager
         self.agent_communicator = AgentCommunicator()
         self.node_manager.agent_client = self.agent_communicator  # 暂时保留用于兼容性，后续应该修改node_manager
-        self.scheduler = None  # 将由外部设置
         self.plan_queue = queue.Queue()
         self.is_running = False
         
@@ -20,11 +19,6 @@ class AllocationExecutor:
         self.plan_thread.start()
         
         print("[AllocationExecutor] 分配执行器已初始化")
-
-    def register_scheduler(self, scheduler):
-        """注册调度器，解决循环依赖问题"""
-        self.scheduler = scheduler
-        print("[AllocationExecutor] 已注册调度器引用")
 
     def register_agent_endpoint(self, node_id: str, endpoint: str):
         """注册agent的endpoint"""
@@ -153,44 +147,19 @@ class AllocationExecutor:
 
     def delete_job(self, job_id: str) -> bool:
         """删除作业及其所有相关资源
-        1. 先停止作业的所有任务
-        2. 然后删除数据库中的所有记录
+        1. 先停止作业的所有任务（负责与Agent通信）
+        2. 然后调用NodeManager清理作业相关的所有数据库记录
         """
         # 首先停止作业的所有任务
         stop_success = self.stop_job(job_id)
         if not stop_success:
             print(f"[AllocationExecutor] 警告：停止作业 {job_id} 失败，但仍将尝试删除数据")
             
-        # 删除数据库中的所有相关记录
-        conn = None
-        try:
-            conn = sqlite3.connect(self.node_manager.db_path)
-            cursor = conn.cursor()
-            
-            # 获取所有相关的allocation_ids
-            cursor.execute('SELECT allocation_id FROM allocations WHERE job_id = ?', (job_id,))
-            allocation_ids = [row[0] for row in cursor.fetchall()]
-            
-            # 删除相关的task_status记录
-            for allocation_id in allocation_ids:
-                cursor.execute('DELETE FROM task_status WHERE allocation_id = ?', (allocation_id,))
-                print(f"[AllocationExecutor] 删除allocation {allocation_id}的任务状态记录")
-            
-            # 删除allocation记录
-            cursor.execute('DELETE FROM allocations WHERE job_id = ?', (job_id,))
-            print(f"[AllocationExecutor] 删除作业 {job_id} 的所有分配记录")
-            
-            # 删除job记录
-            cursor.execute('DELETE FROM jobs WHERE job_id = ?', (job_id,))
-            print(f"[AllocationExecutor] 删除作业 {job_id} 记录")
-            
-            conn.commit()
-            print(f"[AllocationExecutor] 作业 {job_id} 及其相关资源已完全删除")
-            return True
-            
-        except Exception as e:
-            print(f"[AllocationExecutor] 删除作业时出错: {e}")
+        # 调用NodeManager清理所有相关数据库记录
+        clean_success = self.node_manager.clean_job_data(job_id)
+        if not clean_success:
+            print(f"[AllocationExecutor] 清理作业 {job_id} 数据库记录失败")
             return False
-        finally:
-            if conn:
-                conn.close() 
+            
+        print(f"[AllocationExecutor] 作业 {job_id} 及其相关资源已完全删除")
+        return True 

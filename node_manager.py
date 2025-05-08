@@ -6,15 +6,151 @@ import sqlite3
 import uuid
 from models import JobStatus, Allocation
 
+class NodeHealthMonitor:
+    """负责监控节点健康状态的独立组件"""
+    def __init__(self, db_path: str, heartbeat_timeout: int = 15):
+        self.db_path = db_path
+        self.heartbeat_timeout = heartbeat_timeout
+        self.is_running = False
+        self.check_thread = None
+        print("[NodeHealthMonitor] 节点健康监控器已初始化")
+        
+    def start(self):
+        """启动健康监控线程"""
+        if not self.is_running:
+            self.is_running = True
+            self.check_thread = threading.Thread(target=self._check_node_health, daemon=True)
+            self.check_thread.start()
+            print("[NodeHealthMonitor] 节点健康监控已启动")
+    
+    def stop(self):
+        """停止健康监控线程"""
+        self.is_running = False
+        if self.check_thread:
+            # 注意：由于是daemon线程，可能无法正常join
+            print("[NodeHealthMonitor] 节点健康监控已停止")
+    
+    def _check_node_health(self):
+        """检查节点健康状态"""
+        while self.is_running:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                timeout_threshold = time.time() - self.heartbeat_timeout
+                
+                # 添加更多日志，显示当前状态
+                cursor.execute('SELECT COUNT(*) FROM nodes')
+                total_nodes = cursor.fetchone()[0]
+                cursor.execute('SELECT COUNT(*) FROM nodes WHERE healthy = 0')
+                unhealthy_nodes = cursor.fetchone()[0]
+                print(f"[NodeHealthMonitor] 当前节点状态: 总计 {total_nodes} 个节点, 不健康 {unhealthy_nodes} 个")
+                
+                # 标记不健康的节点
+                cursor.execute('''
+                    UPDATE nodes 
+                    SET healthy = 0 
+                    WHERE last_heartbeat < ? AND healthy = 1
+                ''', (timeout_threshold,))
+                
+                if cursor.rowcount > 0:
+                    print(f"[NodeHealthMonitor] 标记 {cursor.rowcount} 个节点为不健康状态（心跳超时）")
+                    
+                    # 获取不健康节点上的分配
+                    cursor.execute('''
+                        SELECT a.allocation_id, a.job_id, a.node_id
+                        FROM allocations a
+                        JOIN nodes n ON a.node_id = n.node_id
+                        WHERE n.healthy = 0 
+                        AND a.status NOT IN ('complete', 'failed', 'lost', 'stopped')
+                    ''')
+                    lost_allocations = cursor.fetchall()
+                    
+                    # 收集需要更新状态的作业ID
+                    affected_job_ids = set()
+                    
+                    # 更新这些分配的状态为 LOST
+                    for alloc in lost_allocations:
+                        allocation_id, job_id, node_id = alloc
+                        print(f"[NodeHealthMonitor] 标记分配 {allocation_id} 为丢失状态（节点 {node_id} 不健康）")
+                        
+                        cursor.execute('''
+                            UPDATE allocations 
+                            SET status = ?, 
+                                end_time = ?
+                            WHERE allocation_id = ?
+                        ''', ('lost', time.time(), allocation_id))
+                        
+                        # 更新相关任务的状态
+                        cursor.execute('''
+                            UPDATE task_status
+                            SET status = ?,
+                                end_time = ?
+                            WHERE allocation_id = ?
+                            AND status NOT IN ('complete', 'failed')
+                        ''', ('lost', time.time(), allocation_id))
+                        
+                        # 添加到受影响的作业集合
+                        affected_job_ids.add(job_id)
+                    
+                    # 更新受影响作业的状态
+                    for job_id in affected_job_ids:
+                        print(f"[NodeHealthMonitor] 更新受影响作业 {job_id} 的状态")
+                        
+                        # 获取作业所有分配的状态统计
+                        cursor.execute('''
+                            SELECT status, COUNT(*) 
+                            FROM allocations 
+                            WHERE job_id = ? 
+                            GROUP BY status
+                        ''', (job_id,))
+                        status_counts = dict(cursor.fetchall())
+                        
+                        # 计算总分配数
+                        total_allocations = sum(status_counts.values())
+                        
+                        # 根据分配状态确定作业状态
+                        new_job_status = None
+                        
+                        # 全部丢失
+                        if status_counts.get('lost', 0) == total_allocations:
+                            new_job_status = 'lost'
+                        # 有运行的但也有丢失的 -> 降级状态
+                        elif status_counts.get('running', 0) > 0 and status_counts.get('lost', 0) > 0:
+                            new_job_status = 'degraded'
+                        # 其他情况，需要更全面的评估
+                        elif status_counts.get('lost', 0) > 0:
+                            # 如果有丢失的分配，但没有其他运行的分配，可能需要标记为blocked或failed
+                            if status_counts.get('failed', 0) > 0:
+                                new_job_status = 'failed'
+                            else:
+                                new_job_status = 'blocked'
+                        
+                        # 更新作业状态
+                        if new_job_status:
+                            cursor.execute('''
+                                UPDATE jobs 
+                                SET status = ? 
+                                WHERE job_id = ?
+                            ''', (new_job_status, job_id))
+                            print(f"[NodeHealthMonitor] 作业 {job_id} 状态已更新为: {new_job_status}")
+                
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"[NodeHealthMonitor] 健康检查时出错: {e}")
+            
+            time.sleep(5)
+
 class NodeManager:
     def __init__(self, db_path: str = "nomad.db"):
         self.db_path = db_path
         self.heartbeat_timeout = 15
         self.setup_database()
-        self.check_thread = threading.Thread(target=self._check_node_health, daemon=True)
-        self.check_thread.start()
-        self.nodes = {}  # 存储节点ID到节点对象的映射
-        self.allocations = {}  # 存储分配ID到分配对象的映射
+        # 创建并启动健康监控器
+        self.health_monitor = NodeHealthMonitor(db_path, self.heartbeat_timeout)
+        self.health_monitor.start()
+        # 不再需要在内存中维护节点和分配信息
         print("[NodeManager] 节点管理器已初始化")
 
     def setup_database(self):
@@ -247,17 +383,23 @@ class NodeManager:
             # 检查是否是现有作业的更新
             job_id = job_data.get("job_id")
             is_update = False
+            current_status = JobStatus.PENDING.value  # 默认为PENDING，用于新作业
             
             if job_id:
                 # 检查作业是否存在
-                cursor.execute('SELECT 1 FROM jobs WHERE job_id = ?', (job_id,))
-                if cursor.fetchone():
+                cursor.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,))
+                row = cursor.fetchone()
+                if row:
                     is_update = True
+                    current_status = row[0]  # 获取当前状态
             else:
                 job_id = str(uuid.uuid4())
             
             print(f"\n[NodeManager] {'更新' if is_update else '提交新'}作业，作业ID: {job_id}")
             print(f"[NodeManager] 作业详情: {json.dumps(job_data, indent=2, ensure_ascii=False)}")
+            
+            # 使用适当的状态：对于更新保留当前状态，对于新作业使用PENDING
+            status_to_use = current_status
             
             cursor.execute('''
                 INSERT OR REPLACE INTO jobs (job_id, task_groups, constraints, status)
@@ -266,12 +408,12 @@ class NodeManager:
                 job_id,
                 json.dumps(job_data["task_groups"]),
                 json.dumps(job_data.get("constraints", {})),
-                JobStatus.PENDING.value
+                status_to_use
             ))
             
             conn.commit()
             conn.close()
-            print(f"[NodeManager] 作业已{'更新' if is_update else '保存'}到数据库")
+            print(f"[NodeManager] 作业已{'更新' if is_update else '保存'}到数据库 (状态: {status_to_use})")
             return job_id, is_update
         except Exception as e:
             print(f"[NodeManager] 提交作业时出错: {e}")
@@ -340,63 +482,6 @@ class NodeManager:
         except Exception as e:
             print(f"[NodeManager] 删除分配时出错: {e}")
             return False, None
-
-    def _check_node_health(self):
-        """检查节点健康状态"""
-        while True:
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                
-                timeout_threshold = time.time() - self.heartbeat_timeout
-                
-                # 标记不健康的节点
-                cursor.execute('''
-                    UPDATE nodes 
-                    SET healthy = 0 
-                    WHERE last_heartbeat < ? AND healthy = 1
-                ''', (timeout_threshold,))
-                
-                if cursor.rowcount > 0:
-                    print(f"[NodeManager] 标记 {cursor.rowcount} 个节点为不健康状态（心跳超时）")
-                    
-                    # 获取不健康节点上的分配
-                    cursor.execute('''
-                        SELECT a.allocation_id, a.job_id, a.node_id
-                        FROM allocations a
-                        JOIN nodes n ON a.node_id = n.node_id
-                        WHERE n.healthy = 0 
-                        AND a.status NOT IN ('complete', 'failed', 'lost', 'stopped')
-                    ''')
-                    lost_allocations = cursor.fetchall()
-                    
-                    # 更新这些分配的状态为 LOST
-                    for alloc in lost_allocations:
-                        allocation_id, job_id, node_id = alloc
-                        print(f"[NodeManager] 标记分配 {allocation_id} 为丢失状态（节点 {node_id} 不健康）")
-                        
-                        cursor.execute('''
-                            UPDATE allocations 
-                            SET status = ?, 
-                                end_time = ?
-                            WHERE allocation_id = ?
-                        ''', ('lost', time.time(), allocation_id))
-                        
-                        # 更新相关任务的状态
-                        cursor.execute('''
-                            UPDATE task_status
-                            SET status = ?,
-                                end_time = ?
-                            WHERE allocation_id = ?
-                            AND status NOT IN ('complete', 'failed')
-                        ''', ('lost', time.time(), allocation_id))
-                
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                print(f"[NodeManager] 健康检查时出错: {e}")
-            
-            time.sleep(5)
 
     def stop_job(self, job_id: str) -> Tuple[bool, List[Dict]]:
         """停止作业
@@ -712,16 +797,28 @@ class NodeManager:
     def _has_sufficient_resources(self, job_id: str) -> bool:
         """
         检查是否有足够的资源来运行作业
+        直接从数据库获取节点资源信息
         """
         try:
             # 获取作业信息
             job_info = self.get_job_info(job_id)
             if not job_info:
+                print(f"[NodeManager] 找不到作业 {job_id} 的信息")
                 return False
 
-            # 获取所有健康的节点
-            healthy_nodes = [node for node in self.nodes.values() if node.healthy]
+            # 直接从数据库获取所有健康的节点
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT node_id, resources 
+                FROM nodes 
+                WHERE healthy = 1
+            ''')
+            healthy_nodes = cursor.fetchall()
+            conn.close()
+            
             if not healthy_nodes:
+                print("[NodeManager] 没有健康的节点可用于资源检查")
                 return False
 
             # 检查每个任务组的资源需求
@@ -734,20 +831,51 @@ class NodeManager:
 
                 # 检查是否有节点满足资源要求
                 resource_satisfied = False
-                for node in healthy_nodes:
-                    if (node.available_resources.get("cpu", 0) >= total_cpu and 
-                        node.available_resources.get("memory", 0) >= total_memory):
+                for node_id, resources_json in healthy_nodes:
+                    node_resources = json.loads(resources_json)
+                    # 计算节点可用资源 (简化逻辑，实际应考虑正在运行的分配)
+                    available_cpu = node_resources.get("cpu", 0)
+                    available_memory = node_resources.get("memory", 0)
+                    
+                    # 查询节点上运行的分配，计算已用资源
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT a.allocation_id, ts.resources
+                        FROM allocations a
+                        JOIN task_status ts ON a.allocation_id = ts.allocation_id
+                        WHERE a.node_id = ? AND a.status = 'running'
+                    ''', (node_id,))
+                    running_tasks = cursor.fetchall()
+                    conn.close()
+                    
+                    # 计算已使用的资源
+                    used_cpu = 0
+                    used_memory = 0
+                    for _, task_resources_json in running_tasks:
+                        if task_resources_json:
+                            task_resources = json.loads(task_resources_json)
+                            used_cpu += task_resources.get("cpu", 0)
+                            used_memory += task_resources.get("memory", 0)
+                    
+                    # 计算实际可用资源
+                    available_cpu -= used_cpu
+                    available_memory -= used_memory
+                    
+                    if (available_cpu >= total_cpu and available_memory >= total_memory):
                         resource_satisfied = True
                         break
 
                 if not resource_satisfied:
+                    print(f"[NodeManager] 作业 {job_id} 的任务组资源需求无法满足：CPU={total_cpu}, 内存={total_memory}")
                     return False
 
+            print(f"[NodeManager] 作业 {job_id} 的资源需求可以满足")
             return True
 
         except Exception as e:
             print(f"[NodeManager] 检查资源时出错: {e}")
-            return False 
+            return False
 
     def delete_job(self, job_id: str) -> bool:
         """删除作业及其所有相关资源
@@ -790,4 +918,47 @@ class NodeManager:
             
         except Exception as e:
             print(f"[NodeManager] 删除作业时出错: {e}")
+            return False 
+
+    def clean_job_data(self, job_id: str) -> bool:
+        """清理作业相关的所有数据库记录
+        
+        注意：此方法只负责数据库清理，不涉及停止运行中的任务或与Agent通信
+        这应该由AllocationExecutor在调用此方法前处理
+        
+        Args:
+            job_id: 要清理的作业ID
+            
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取所有相关的allocation_ids
+            cursor.execute('SELECT allocation_id FROM allocations WHERE job_id = ?', (job_id,))
+            allocation_ids = [row[0] for row in cursor.fetchall()]
+            
+            # 删除相关的task_status记录
+            for allocation_id in allocation_ids:
+                cursor.execute('DELETE FROM task_status WHERE allocation_id = ?', (allocation_id,))
+                print(f"[NodeManager] 删除allocation {allocation_id}的任务状态记录")
+            
+            # 删除allocation记录
+            cursor.execute('DELETE FROM allocations WHERE job_id = ?', (job_id,))
+            print(f"[NodeManager] 删除作业 {job_id} 的所有分配记录")
+            
+            # 删除job记录
+            cursor.execute('DELETE FROM jobs WHERE job_id = ?', (job_id,))
+            print(f"[NodeManager] 删除作业 {job_id} 记录")
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 作业 {job_id} 的所有数据库记录已清理")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 清理作业数据时出错: {e}")
             return False 

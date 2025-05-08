@@ -9,13 +9,10 @@ from node_manager import NodeManager
 app = Flask(__name__)
 CORS(app)  # 启用CORS支持
 
-# 初始化组件 - 按照正确的顺序创建并解决循环依赖
+# 初始化组件 - 按照正确的顺序创建并解决依赖
 node_manager = NodeManager()
-scheduler = Scheduler(node_manager)
 allocation_executor = AllocationExecutor(node_manager)
-
-# 设置相互引用，解决循环依赖问题
-allocation_executor.register_scheduler(scheduler)
+scheduler = Scheduler(node_manager)
 scheduler.set_executor(allocation_executor)
 
 print("[Server] 所有组件初始化完成，服务准备就绪")
