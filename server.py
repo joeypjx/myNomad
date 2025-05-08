@@ -1,19 +1,24 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
-from leader import Leader
-# from scheduler import Scheduler # Scheduler is now initialized by Leader
+from allocation_executor import AllocationExecutor
+from scheduler import Scheduler
 from node_manager import NodeManager
 
 # 创建Flask应用
 app = Flask(__name__)
 CORS(app)  # 启用CORS支持
+
+# 初始化组件 - 按照正确的顺序创建并解决循环依赖
 node_manager = NodeManager()
-# Initialize Leader, which will initialize Scheduler internally
-leader = Leader(node_manager) 
-# scheduler = Scheduler(node_manager) # This line is problematic due to new dependency
-# Access scheduler via leader if needed for direct calls, e.g., leader.scheduler
-scheduler = leader.scheduler # Make scheduler accessible directly if server routes need it
+scheduler = Scheduler(node_manager)
+allocation_executor = AllocationExecutor(node_manager)
+
+# 设置相互引用，解决循环依赖问题
+allocation_executor.register_scheduler(scheduler)
+scheduler.set_executor(allocation_executor)
+
+print("[Server] 所有组件初始化完成，服务准备就绪")
 
 @app.route('/register', methods=['POST'])
 def register_node():
@@ -33,7 +38,7 @@ def register_node():
     success = node_manager.register_node(data)
     if success:
         # 注册agent endpoint
-        leader.register_agent_endpoint(data["node_id"], data["endpoint"])
+        allocation_executor.register_agent_endpoint(data["node_id"], data["endpoint"])
         print(f"[API] 节点 {data['node_id']} 注册成功")
         return jsonify({"message": "Node registered successfully"}), 200
     else:
@@ -123,8 +128,8 @@ def stop_job(job_id):
     if not job:
         return jsonify({"error": "作业不存在"}), 404
     
-    # 停止作业
-    success = node_manager.stop_job(job_id)
+    # 停止作业，使用AllocationExecutor处理完整的停止流程
+    success = allocation_executor.stop_job(job_id)
     if success:
         return jsonify({
             "message": f"作业 {job_id} 已停止"
@@ -184,8 +189,8 @@ def delete_job(job_id):
     if not job:
         return jsonify({"error": "作业不存在"}), 404
     
-    # 删除作业及其相关资源
-    success = node_manager.delete_job(job_id)
+    # 删除作业及其相关资源，使用AllocationExecutor处理完整的删除流程
+    success = allocation_executor.delete_job(job_id)
     if success:
         return jsonify({
             "message": f"作业 {job_id} 及其相关资源已删除"

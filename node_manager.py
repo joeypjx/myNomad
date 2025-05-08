@@ -15,7 +15,6 @@ class NodeManager:
         self.check_thread.start()
         self.nodes = {}  # 存储节点ID到节点对象的映射
         self.allocations = {}  # 存储分配ID到分配对象的映射
-        self.agent_client = None  # 用于与Agent通信的客户端
         print("[NodeManager] 节点管理器已初始化")
 
     def setup_database(self):
@@ -306,15 +305,20 @@ class NodeManager:
             print(f"[NodeManager] 更新分配状态时出错: {e}")
             return False
 
-    def delete_allocation(self, allocation_id: str, notify_agent: bool = True) -> bool:
+    def delete_allocation(self, allocation_id: str, notify_agent: bool = True) -> Tuple[bool, Optional[str]]:
         """删除分配
         Args:
             allocation_id: 分配ID
             notify_agent: 是否需要通知agent停止任务，默认为True
+        
+        Returns:
+            Tuple[bool, Optional[str]]: 第一个元素表示操作是否成功，第二个元素是需要通知的节点ID（如果notify_agent为True）
         """
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            
+            node_id_to_notify = None
             
             # 先获取分配信息
             cursor.execute('''
@@ -325,22 +329,17 @@ class NodeManager:
             row = cursor.fetchone()
             
             if row and notify_agent:
-                node_id = row[0]
-                # 通知节点停止任务
-                if hasattr(self, 'agent_client'):
-                    success = self.agent_client.stop_allocation(node_id, allocation_id)
-                    if not success:
-                        print(f"[NodeManager] 警告：通知节点停止分配失败: {allocation_id}")
+                node_id_to_notify = row[0]
             
             # 从数据库中删除分配
             cursor.execute('DELETE FROM allocations WHERE allocation_id = ?', (allocation_id,))
             conn.commit()
             conn.close()
             print(f"[NodeManager] 删除分配成功: {allocation_id}")
-            return True
+            return True, node_id_to_notify
         except Exception as e:
             print(f"[NodeManager] 删除分配时出错: {e}")
-            return False
+            return False, None
 
     def _check_node_health(self):
         """检查节点健康状态"""
@@ -397,14 +396,16 @@ class NodeManager:
             except Exception as e:
                 print(f"[NodeManager] 健康检查时出错: {e}")
             
-            time.sleep(5) 
+            time.sleep(5)
 
-    def stop_job(self, job_id: str) -> bool:
+    def stop_job(self, job_id: str) -> Tuple[bool, List[Dict]]:
         """停止作业
         1. 获取作业的所有分配
-        2. 通知相关节点停止任务
-        3. 删除分配记录
-        4. 更新作业状态为 DEAD
+        2. 返回分配信息供执行层处理
+        3. 更新作业状态为 DEAD
+        
+        Returns:
+            Tuple[bool, List[Dict]]: (操作是否成功, 需要停止的分配列表)
         """
         try:
             print(f"\n[NodeManager] 开始停止作业: {job_id}")
@@ -413,19 +414,6 @@ class NodeManager:
             allocations = self.get_job_allocations(job_id)
             if not allocations:
                 print(f"[NodeManager] 作业 {job_id} 没有活跃的分配")
-            
-            # 停止所有分配
-            for allocation in allocations:
-                if hasattr(self, 'agent_client'):
-                    success = self.agent_client.stop_allocation(
-                        allocation["node_id"], 
-                        allocation["allocation_id"]
-                    )
-                    if not success:
-                        print(f"[NodeManager] 警告：通知节点停止分配失败: {allocation['allocation_id']}")
-                
-                # 无论通知成功与否，都删除分配记录（不再重复通知agent）
-                self.delete_allocation(allocation["allocation_id"], notify_agent=False)
             
             # 更新作业状态为 DEAD
             conn = sqlite3.connect(self.db_path)
@@ -439,12 +427,13 @@ class NodeManager:
             conn.commit()
             conn.close()
             
-            print(f"[NodeManager] 作业 {job_id} 已停止")
-            return True
+            print(f"[NodeManager] 作业 {job_id} 状态已更新为DEAD")
+            # 返回所有分配信息，由调用者负责停止分配
+            return True, allocations
             
         except Exception as e:
             print(f"[NodeManager] 停止作业时出错: {e}")
-            return False 
+            return False, []
 
     def get_all_jobs(self):
         """获取所有作业信息"""
@@ -762,17 +751,17 @@ class NodeManager:
 
     def delete_job(self, job_id: str) -> bool:
         """删除作业及其所有相关资源
-        1. 停止作业的所有任务
-        2. 删除所有相关的task_status记录
-        3. 删除所有相关的allocation记录
-        4. 删除job记录
+        
+        注意：此方法已被弃用，请直接使用AllocationExecutor.delete_job
+        此方法仅保留用于向后兼容性
         """
+        print(f"\n[NodeManager] 警告：直接使用NodeManager.delete_job方法已被弃用")
+        print(f"[NodeManager] 建议使用AllocationExecutor.delete_job来代替")
+        
+        # 兼容性逻辑 - 之前的方法依赖于stop_job，但现在stop_job不再执行实际操作
+        # 因此需要手动处理数据库清理
         try:
-            print(f"\n[NodeManager] 开始删除作业: {job_id}")
-            
-            # 首先停止作业的所有任务
-            self.stop_job(job_id)
-            
+            # 这个方法不再调用stop_job来删除allocation，而是直接从数据库中删除记录
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             

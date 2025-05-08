@@ -3,20 +3,20 @@ import json
 from typing import Dict, Optional
 from models import Allocation, JobStatus
 
-class AgentClient:
+class AgentCommunicator:
     def __init__(self):
         self.agent_endpoints = {}  # 存储节点ID到agent endpoint的映射
 
     def register_agent(self, node_id: str, endpoint: str):
         """注册agent的endpoint"""
         self.agent_endpoints[node_id] = endpoint
-        print(f"[AgentClient] 注册agent endpoint: {node_id} -> {endpoint}")
+        print(f"[AgentCommunicator] 注册agent endpoint: {node_id} -> {endpoint}")
 
     def send_allocation(self, allocation: Allocation) -> Optional[Dict]:
         """发送分配计划到agent"""
         node_id = allocation.node_id
         if node_id not in self.agent_endpoints:
-            print(f"[AgentClient] 错误：未找到节点 {node_id} 的agent endpoint")
+            print(f"[AgentCommunicator] 错误：未找到节点 {node_id} 的agent endpoint")
             return None
 
         try:
@@ -40,7 +40,7 @@ class AgentClient:
                 "status": allocation.status.value
             }
             
-            print(f"[AgentClient] 发送分配计划到节点 {node_id}: {allocation.id}")
+            print(f"[AgentCommunicator] 发送分配计划到节点 {node_id}: {allocation.id}")
             response = requests.post(
                 endpoint,
                 json=allocation_data,
@@ -50,25 +50,25 @@ class AgentClient:
             
             if response.status_code == 200:
                 result = response.json()
-                print(f"[AgentClient] 节点 {node_id} 接受分配计划: {allocation.id}")
+                print(f"[AgentCommunicator] 节点 {node_id} 接受分配计划: {allocation.id}")
                 return result
             else:
-                print(f"[AgentClient] 节点 {node_id} 拒绝分配计划: {response.status_code}")
+                print(f"[AgentCommunicator] 节点 {node_id} 拒绝分配计划: {response.status_code}")
                 return None
                 
         except requests.exceptions.RequestException as e:
-            print(f"[AgentClient] 发送分配计划到节点 {node_id} 失败: {e}")
+            print(f"[AgentCommunicator] 发送分配计划到节点 {node_id} 失败: {e}")
             return None
 
     def stop_allocation(self, node_id: str, allocation_id: str) -> bool:
         """通知agent停止分配"""
         if node_id not in self.agent_endpoints:
-            print(f"[AgentClient] 错误：未找到节点 {node_id} 的agent endpoint")
+            print(f"[AgentCommunicator] 错误：未找到节点 {node_id} 的agent endpoint")
             return False
 
         try:
             endpoint = f"{self.agent_endpoints[node_id]}/allocations/{allocation_id}"
-            print(f"[AgentClient] 通知节点 {node_id} 停止分配: {allocation_id}")
+            print(f"[AgentCommunicator] 通知节点 {node_id} 停止分配: {allocation_id}")
             response = requests.delete(
                 endpoint,
                 headers={"Content-Type": "application/json"},
@@ -76,12 +76,12 @@ class AgentClient:
             )
             
             if response.status_code == 200:
-                print(f"[AgentClient] 节点 {node_id} 已确认停止分配: {allocation_id}")
+                print(f"[AgentCommunicator] 节点 {node_id} 已确认停止分配: {allocation_id}")
                 return True
             else:
-                print(f"[AgentClient] 节点 {node_id} 停止分配失败: {response.status_code}")
+                print(f"[AgentCommunicator] 节点 {node_id} 停止分配失败: {response.status_code}")
                 return False
                 
         except requests.exceptions.RequestException as e:
-            print(f"[AgentClient] 通知节点 {node_id} 停止分配时出错: {e}")
+            print(f"[AgentCommunicator] 通知节点 {node_id} 停止分配时出错: {e}")
             return False 

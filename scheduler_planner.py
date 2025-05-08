@@ -3,7 +3,7 @@ import json
 import uuid
 from models import EvaluationStatus, Job, Allocation, TriggerEvent, TaskGroup
 
-class Evaluation:
+class SchedulerPlanner:
     def __init__(self, id: str, trigger_event: TriggerEvent, job: Job, nodes: List[Dict], existing_job: Optional[Dict] = None):
         self.id = id
         self.status = EvaluationStatus.PENDING
@@ -12,22 +12,23 @@ class Evaluation:
         # Store original nodes, but we'll use a mutable copy with parsed resources in process
         self.original_nodes_snapshot = nodes
         self.existing_job = existing_job
-        self.plan: List[Allocation] = []
+        self.plan: List[Allocation] = []  # 要创建的新分配
+        self.allocations_to_delete: List[str] = []  # 要删除的分配ID
         self.nodes_in_evaluation: List[Dict] = [] # Will hold nodes with mutable, parsed resources
-        print(f"[Evaluation] 创建评估 {id} 用于作业 {job.id}")
+        print(f"[SchedulerPlanner] 创建评估 {id} 用于作业 {job.id}")
 
     
-    def process(self, node_manager) -> bool:
-        """处理评估，生成分配计划。"""
-        print(f"\n[Evaluation] 开始处理评估 {self.id}")
+    def process(self, node_manager) -> Dict:
+        """处理评估，生成分配计划。返回完整决策结果而不执行操作。"""
+        print(f"\n[SchedulerPlanner] 开始处理评估 {self.id}")
         self._prepare_nodes_for_evaluation() # Initialize self.nodes_in_evaluation
 
         # 快速检查是否有健康节点
         healthy_nodes = [n for n in self.nodes_in_evaluation if n.get("healthy", False)]
         if not healthy_nodes and self.job.task_groups:
-            print(f"[Evaluation] 评估失败：没有可用的健康节点，但作业需要 {len(self.job.task_groups)} 个任务组。")
+            print(f"[SchedulerPlanner] 评估失败：没有可用的健康节点，但作业需要 {len(self.job.task_groups)} 个任务组。")
             self.status = EvaluationStatus.FAILED
-            return False
+            return {"success": False, "plan": self.plan, "allocations_to_delete": self.allocations_to_delete}
 
         changes_made_to_allocations = False
         planned_or_kept_task_groups: Set[str] = set()
@@ -40,12 +41,12 @@ class Evaluation:
             alloc["task_group"]: alloc for alloc in initial_existing_allocations_list
         }
 
-        print(f"[Evaluation] 作业 {self.job.id} 包含 {len(self.job.task_groups)} 个任务组")
-        print(f"[Evaluation] 作业的现有分配 (本次评估前)：{json.dumps(initial_existing_allocations_list, indent=2)}")
+        print(f"[SchedulerPlanner] 作业 {self.job.id} 包含 {len(self.job.task_groups)} 个任务组")
+        print(f"[SchedulerPlanner] 作业的现有分配 (本次评估前)：{json.dumps(initial_existing_allocations_list, indent=2)}")
 
         # 处理每个任务组
         for task_group in self.job.task_groups:
-            print(f"\n[Evaluation] 处理任务组：{task_group.name}")
+            print(f"\n[SchedulerPlanner] 处理任务组：{task_group.name}")
             
             # 初始默认为需要创建新分配
             allocation_was_kept = False
@@ -53,7 +54,7 @@ class Evaluation:
             
             # 1. 首先尝试保留现有分配 (如果存在且是更新操作)
             if existing_allocation_details and self.trigger_event == TriggerEvent.JOB_UPDATE and self.existing_job:
-                print(f"[Evaluation] 发现任务组 {task_group.name} 的现有分配：{existing_allocation_details['allocation_id']}")
+                print(f"[SchedulerPlanner] 发现任务组 {task_group.name} 的现有分配：{existing_allocation_details['allocation_id']}")
                 
                 # 1.1 获取现有分配所在的节点信息
                 current_node_id = existing_allocation_details["node_id"]
@@ -80,7 +81,7 @@ class Evaluation:
                 # 1.4 根据检查结果决定保留还是重新分配
                 if can_keep_allocation:
                     # 保留现有分配
-                    print(f"[Evaluation] 任务组 {task_group.name} 在节点 {current_node_id} 上的现有分配保持不变。")
+                    print(f"[SchedulerPlanner] 任务组 {task_group.name} 在节点 {current_node_id} 上的现有分配保持不变。")
                     planned_or_kept_task_groups.add(task_group.name)
                     allocation_was_kept = True
                     
@@ -90,16 +91,17 @@ class Evaluation:
                         # 使用集中方法更新资源 - 不创建新分配
                         self._generate_plan_and_update_resources(task_group, node_to_update_resources, create_allocation=False)
                     else:
-                        print(f"[Evaluation] 警告：在 self.nodes_in_evaluation 中未找到节点 {current_node_id} 以更新保留分配的资源。")
+                        print(f"[SchedulerPlanner] 警告：在 self.nodes_in_evaluation 中未找到节点 {current_node_id} 以更新保留分配的资源。")
                 else:
                     # 无法保留，需要删除旧分配
                     if not existing_task_group_def or tasks_changed:
-                        print(f"[Evaluation] 任务组 {task_group.name} 的任务配置已更改。")
+                        print(f"[SchedulerPlanner] 任务组 {task_group.name} 的任务配置已更改。")
                     else:
-                        print(f"[Evaluation] 现有节点 {current_node_id} 不再适用于任务组 {task_group.name}。")
+                        print(f"[SchedulerPlanner] 现有节点 {current_node_id} 不再适用于任务组 {task_group.name}。")
                         
-                    print(f"[Evaluation] 任务组 {task_group.name} 需要重新规划。正在删除旧分配：{existing_allocation_details['allocation_id']}")
-                    node_manager.delete_allocation(existing_allocation_details["allocation_id"]) # todo: check return?
+                    print(f"[SchedulerPlanner] 任务组 {task_group.name} 需要重新规划。将删除旧分配：{existing_allocation_details['allocation_id']}")
+                    # 添加到待删除列表而非直接删除
+                    self.allocations_to_delete.append(existing_allocation_details["allocation_id"])
                     changes_made_to_allocations = True
                     # 从跟踪字典中移除，防止后续重复处理
                     del existing_allocations_by_group_mutable[task_group.name]
@@ -109,7 +111,7 @@ class Evaluation:
                 # 2.1 寻找符合条件的节点
                 feasible_nodes = self.feasibility_check(task_group, use_parsed_resources=True)
                 if not feasible_nodes:
-                    print(f"[Evaluation] 未找到适用于任务组 {task_group.name} 的节点。")
+                    print(f"[SchedulerPlanner] 未找到适用于任务组 {task_group.name} 的节点。")
                     # 继续处理下一个任务组，最终评估结果由总体覆盖情况决定
                     continue
                 
@@ -126,7 +128,13 @@ class Evaluation:
         self._cleanup_removed_task_groups(node_manager, existing_allocations_by_group_mutable, changes_made_to_allocations)
 
         # 返回最终评估结果
-        return self._determine_evaluation_result(planned_or_kept_task_groups, changes_made_to_allocations)
+        success = self._determine_evaluation_result(planned_or_kept_task_groups, changes_made_to_allocations)
+        
+        return {
+            "success": success,
+            "plan": self.plan,
+            "allocations_to_delete": self.allocations_to_delete
+        }
 
     def _prepare_nodes_for_evaluation(self):
         """创建节点的深拷贝并解析其资源以供内部使用。"""
@@ -141,7 +149,7 @@ class Evaluation:
                 # If resources are already a dict (e.g., during tests or if format changes)
                 # or if it's malformed, ensure it's a dict.
                 if not isinstance(copied_node_data.get('resources'), dict):
-                    print(f"[Evaluation] 警告：节点 {copied_node_data.get('node_id')} 的资源格式错误或非JSON字符串。将使用零资源默认值。")
+                    print(f"[SchedulerPlanner] 警告：节点 {copied_node_data.get('node_id')} 的资源格式错误或非JSON字符串。将使用零资源默认值。")
                     copied_node_data['resources'] = {"cpu": 0, "memory": 0}
             self.nodes_in_evaluation.append(copied_node_data)
 
@@ -177,11 +185,11 @@ class Evaluation:
                 task_group=task_group
             )
             self.plan.append(allocation)
-            print(f"[Evaluation] 计划分配 {allocation.id} 给节点 {selected_node['node_id']}。")
+            print(f"[SchedulerPlanner] 计划分配 {allocation.id} 给节点 {selected_node['node_id']}。")
             
         # 扣减节点资源 (无论是新分配还是保留现有分配)
         remaining_resources = self._update_node_resources(selected_node, tg_resources)
-        print(f"[Evaluation] {'为新分配' if create_allocation else '为保留的分配'}在节点 {selected_node['node_id']} 上预留资源。"
+        print(f"[SchedulerPlanner] {'为新分配' if create_allocation else '为保留的分配'}在节点 {selected_node['node_id']} 上预留资源。"
               f"剩余 (本次评估中)：CPU {remaining_resources['cpu']}, 内存 {remaining_resources['memory']}")
               
         return allocation
@@ -209,19 +217,19 @@ class Evaluation:
         target_nodes = self.nodes_in_evaluation if use_parsed_resources else self.original_nodes_snapshot
         
         feasible_nodes = []
-        # print(f"[Evaluation] Начало проверки выполнимости узлов, всего {len(target_nodes)} узлов для проверки для группы {task_group.name}")
+        # print(f"[SchedulerPlanner] Начало проверки выполнимости узлов, всего {len(target_nodes)} узлов для проверки для группы {task_group.name}")
         
         total_resources_needed = task_group.get_total_resources()
         
         for node in target_nodes:
             if not node.get("healthy", False): # Ensure healthy key exists
-                # print(f"[Evaluation] Узел {node.get('node_id')} неработоспособен, пропуск")
+                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} неработоспособен, пропуск")
                 continue
             
             # Region constraint (assuming job.constraints is a dict)
             job_region_constraint = self.job.constraints.get("region")
             if job_region_constraint and node.get("region") != job_region_constraint:
-                # print(f"[Evaluation] Узел {node.get('node_id')} не соответствует региону, требуется: {job_region_constraint}, фактически: {node.get('region')}")
+                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не соответствует региону, требуется: {job_region_constraint}, фактически: {node.get('region')}")
                 continue
             
             # Resource check
@@ -231,18 +239,18 @@ class Evaluation:
                     node_resources = json.loads(str(node_resources)) # Ensure it's a string first if it might be a dict
                 except (TypeError, json.JSONDecodeError):
                     if not isinstance(node_resources, dict): # Check if already a dict
-                         # print(f"[Evaluation] Ошибка парсинга ресурсов для узла {node.get('node_id')}. Ресурсы: {node_resources}")
+                         # print(f"[SchedulerPlanner] Ошибка парсинга ресурсов для узла {node.get('node_id')}. Ресурсы: {node_resources}")
                          continue # Skip node if resources are malformed
 
             if node_resources.get("cpu", 0) < total_resources_needed.get("cpu", 0):
-                # print(f"[Evaluation] Узел {node.get('node_id')} не имеет достаточного CPU, требуется: {total_resources_needed['cpu']}, доступно: {node_resources.get('cpu', 0)}")
+                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не имеет достаточного CPU, требуется: {total_resources_needed['cpu']}, доступно: {node_resources.get('cpu', 0)}")
                 continue
                 
             if node_resources.get("memory", 0) < total_resources_needed.get("memory", 0):
-                # print(f"[Evaluation] Узел {node.get('node_id')} не имеет достаточной памяти, требуется: {total_resources_needed['memory']}, доступно: {node_resources.get('memory', 0)}")
+                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не имеет достаточной памяти, требуется: {total_resources_needed['memory']}, доступно: {node_resources.get('memory', 0)}")
                 continue
             
-            # print(f"[Evaluation] Узел {node.get('node_id')} удовлетворяет требованиям для {task_group.name}")
+            # print(f"[SchedulerPlanner] Узел {node.get('node_id')} удовлетворяет требованиям для {task_group.name}")
             feasible_nodes.append(node)
             
         return feasible_nodes
@@ -283,7 +291,7 @@ class Evaluation:
                 if isinstance(node["resources"], dict):
                     resources = node["resources"]  # 已经是字典
                 else:
-                    print(f"[Evaluation] 解析节点 {node.get('node_id')} 资源时出错")
+                    print(f"[SchedulerPlanner] 解析节点 {node.get('node_id')} 资源时出错")
                     return False
         
         total_resources = task_group.get_total_resources()
@@ -301,7 +309,7 @@ class Evaluation:
         if self.trigger_event != TriggerEvent.JOB_UPDATE:
             return changes_made_to_allocations  # 非更新操作无需清理
             
-        print("\n[Evaluation] 检查是否有任务组被删除...")
+        print("\n[SchedulerPlanner] 检查是否有任务组被删除...")
         current_task_group_names_in_new_job = {tg.name for tg in self.job.task_groups}
         
         # Iterate over a copy of keys for safe deletion from the mutable dictionary
@@ -309,9 +317,10 @@ class Evaluation:
             if task_group_name_to_check not in current_task_group_names_in_new_job:
                 alloc_details_to_delete = existing_allocations_by_group_mutable[task_group_name_to_check]
                 allocation_id_to_delete = alloc_details_to_delete["allocation_id"]
-                print(f"[Evaluation] 任务组 {task_group_name_to_check} 已从作业规范中删除。")
-                print(f"[Evaluation] 正在删除其现有分配：{allocation_id_to_delete}")
-                node_manager.delete_allocation(allocation_id_to_delete)
+                print(f"[SchedulerPlanner] 任务组 {task_group_name_to_check} 已从作业规范中删除。")
+                print(f"[SchedulerPlanner] 将删除其现有分配：{allocation_id_to_delete}")
+                # 添加到待删除列表而非直接删除
+                self.allocations_to_delete.append(allocation_id_to_delete)
                 changes_made_to_allocations = True
                 del existing_allocations_by_group_mutable[task_group_name_to_check] # Clean from mutable dict
                 
@@ -321,7 +330,7 @@ class Evaluation:
         """确定评估的最终结果并设置状态"""
         # 如果不是所有任务组都能被规划/保留，则评估失败
         if len(planned_or_kept_task_groups) < len(self.job.task_groups):
-            print(f"[Evaluation] 评估失败：并非所有任务组 ({len(self.job.task_groups)}个) 都能被规划或保留 ({len(planned_or_kept_task_groups)}个已覆盖)。")
+            print(f"[SchedulerPlanner] 评估失败：并非所有任务组 ({len(self.job.task_groups)}个) 都能被规划或保留 ({len(planned_or_kept_task_groups)}个已覆盖)。")
             self.status = EvaluationStatus.FAILED
             return False
             
@@ -330,10 +339,10 @@ class Evaluation:
         
         # 根据情况提供不同的成功消息
         if not self.plan and not changes_made_to_allocations and self.trigger_event == TriggerEvent.JOB_UPDATE:
-            print(f"[Evaluation] 评估完成 (无变更)：计划为空，且未对分配进行任何更改。")
+            print(f"[SchedulerPlanner] 评估完成 (无变更)：计划为空，且未对分配进行任何更改。")
         elif not self.plan:
-            print(f"[Evaluation] 评估完成：计划为空 (作业可能不包含任务组，或所有任务组都保留未更改)。")
+            print(f"[SchedulerPlanner] 评估完成：计划为空 (作业可能不包含任务组，或所有任务组都保留未更改)。")
         else:
-            print(f"[Evaluation] 评估完成。生成了 {len(self.plan)} 个新的/更新的分配计划。")
+            print(f"[SchedulerPlanner] 评估完成。生成了 {len(self.plan)} 个新的/更新的分配计划。")
             
         return True 

@@ -4,23 +4,28 @@ import time
 import uuid
 import queue
 from models import Job, TriggerEvent
-from evaluation import Evaluation, EvaluationStatus
+from scheduler_planner import SchedulerPlanner, EvaluationStatus
 from node_manager import NodeManager
-# Forward declaration for type hint if Leader is in the same file or to avoid circularity
+# Forward declaration for type hint
 # from typing import TYPE_CHECKING
 # if TYPE_CHECKING:
-#     from leader import Leader 
+#     from allocation_executor import AllocationExecutor 
 
 class Scheduler:
-    def __init__(self, node_manager: NodeManager, leader: 'Leader'):
+    def __init__(self, node_manager: NodeManager):
         self.node_manager = node_manager
-        self.leader = leader
+        self.allocation_executor = None  # 将在之后通过set_executor设置
         self.evaluation_queue = queue.Queue()
         print("[Scheduler] 调度器已初始化")
         self.scheduling_thread = threading.Thread(target=self._scheduling_loop, daemon=True)
         self.scheduling_thread.start()
 
-    def create_evaluation(self, job_data: Dict, job_id: str = None) -> Optional[Evaluation]:
+    def set_executor(self, allocation_executor):
+        """设置分配执行器引用，解决循环依赖问题"""
+        self.allocation_executor = allocation_executor
+        print("[Scheduler] 已设置分配执行器引用")
+
+    def create_evaluation(self, job_data: Dict, job_id: str = None) -> Optional[SchedulerPlanner]:
         """创建新的评估"""
         print("\n[Scheduler] 收到新的作业评估请求")
         
@@ -44,7 +49,7 @@ class Scheduler:
             print("[Scheduler] 警告：没有可用的健康节点")
             return None
         
-        evaluation = Evaluation(
+        evaluation = SchedulerPlanner(
             id=str(uuid.uuid4()),
             trigger_event=TriggerEvent.JOB_UPDATE if existing_job else TriggerEvent.JOB_SUBMIT,
             job=job,
@@ -55,7 +60,7 @@ class Scheduler:
         print(f"[Scheduler] 创建评估成功，评估ID: {evaluation.id}")
         return evaluation
 
-    def enqueue_evaluation(self, evaluation: Evaluation):
+    def enqueue_evaluation(self, evaluation: SchedulerPlanner):
         """将评估加入调度器自己的队列"""
         if evaluation:
             self.evaluation_queue.put(evaluation)
@@ -63,14 +68,25 @@ class Scheduler:
         else:
             print(f"[Scheduler] 尝试加入空评估到内部队列，已忽略")
 
-    def process_evaluation(self, evaluation: Evaluation):
+    def process_evaluation(self, evaluation: SchedulerPlanner):
         """处理单个评估"""
         print(f"\n[Scheduler] 开始处理评估 {evaluation.id}")
-        success = evaluation.process(self.node_manager)
+        
+        # 检查是否已设置allocation_executor
+        if not self.allocation_executor:
+            print(f"[Scheduler] 错误：尚未设置分配执行器，无法处理评估 {evaluation.id}")
+            return
+            
+        # 执行评估并获取决策结果
+        evaluation_result = evaluation.process(self.node_manager)
+        success = evaluation_result["success"]
+        plan = evaluation_result["plan"]  # 新分配
+        allocations_to_delete = evaluation_result["allocations_to_delete"]  # 要删除的分配
         
         if success:
-            print(f"[Scheduler] 评估 {evaluation.id} 成功，开始更新分配计划")
-            # 评估成功后，更新作业信息
+            print(f"[Scheduler] 评估 {evaluation.id} 成功，开始执行分配计划")
+            
+            # 更新作业信息
             job_data = {
                 "job_id": evaluation.job.id,
                 "task_groups": [
@@ -88,8 +104,10 @@ class Scheduler:
                 "constraints": evaluation.job.constraints
             }
             self.node_manager.submit_job(job_data)
-            # 提交分配计划
-            self.leader.submit_plan(evaluation.plan)
+            
+            # 提交完整分配计划（创建和删除）给allocation_executor执行
+            self.allocation_executor.submit_plan(plan, allocations_to_delete)
+            print(f"[Scheduler] 提交计划: 创建 {len(plan)} 个分配, 删除 {len(allocations_to_delete)} 个分配")
         else:
             print(f"[Scheduler] 评估 {evaluation.id} 失败，无法为作业创建分配计划")
 
