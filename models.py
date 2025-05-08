@@ -37,9 +37,9 @@ class AllocationStatus(Enum):
 class TriggerEvent(Enum):
     JOB_SUBMIT = "job_submit"
     JOB_UPDATE = "job_update"
-    JOB_DEREGISTER = "job_deregister"
-    NODE_FAILURE = "node_failure"
-    NODE_JOIN = "node_join"
+    JOB_DEREGISTER = "job_deregister" # Todo: 作业取消，触发重新调度   
+    NODE_FAILURE = "node_failure" # Todo: 节点失联，触发重新调度
+    NODE_JOIN = "node_join" # Todo: 节点加入，触发重新调度
 
 class Task:
     def __init__(self, name: str, resources: Dict, config: Dict):

@@ -4,12 +4,17 @@ import time
 import uuid
 import queue
 from models import Job, TriggerEvent
-from evaluation import Evaluation
+from evaluation import Evaluation, EvaluationStatus
 from node_manager import NodeManager
+# Forward declaration for type hint if Leader is in the same file or to avoid circularity
+# from typing import TYPE_CHECKING
+# if TYPE_CHECKING:
+#     from leader import Leader 
 
 class Scheduler:
-    def __init__(self, node_manager: NodeManager):
+    def __init__(self, node_manager: NodeManager, leader: 'Leader'):
         self.node_manager = node_manager
+        self.leader = leader
         self.evaluation_queue = queue.Queue()
         print("[Scheduler] 调度器已初始化")
         self.scheduling_thread = threading.Thread(target=self._scheduling_loop, daemon=True)
@@ -50,7 +55,15 @@ class Scheduler:
         print(f"[Scheduler] 创建评估成功，评估ID: {evaluation.id}")
         return evaluation
 
-    def process_evaluation(self, evaluation: Evaluation, leader):
+    def enqueue_evaluation(self, evaluation: Evaluation):
+        """将评估加入调度器自己的队列"""
+        if evaluation:
+            self.evaluation_queue.put(evaluation)
+            print(f"[Scheduler] 已将评估 {evaluation.id} 加入内部队列")
+        else:
+            print(f"[Scheduler] 尝试加入空评估到内部队列，已忽略")
+
+    def process_evaluation(self, evaluation: Evaluation):
         """处理单个评估"""
         print(f"\n[Scheduler] 开始处理评估 {evaluation.id}")
         success = evaluation.process(self.node_manager)
@@ -76,7 +89,7 @@ class Scheduler:
             }
             self.node_manager.submit_job(job_data)
             # 提交分配计划
-            leader.submit_plan(evaluation.plan)
+            self.leader.submit_plan(evaluation.plan)
         else:
             print(f"[Scheduler] 评估 {evaluation.id} 失败，无法为作业创建分配计划")
 
@@ -86,5 +99,17 @@ class Scheduler:
         while True:
             if not self.evaluation_queue.empty():
                 evaluation = self.evaluation_queue.get()
-                self.process_evaluation(evaluation)
+                print(f"[Scheduler] 从队列中获取评估 {evaluation.id} 进行处理")
+                try:
+                    self.process_evaluation(evaluation)
+                    # Set evaluation status here
+                    if evaluation: # Should always be true if taken from queue
+                        evaluation.status = EvaluationStatus.COMPLETE
+                        print(f"[Scheduler] 评估 {evaluation.id} 处理完成 (状态: {evaluation.status.value})")
+                except Exception as e:
+                    if evaluation: # Should always be true
+                        evaluation.status = EvaluationStatus.FAILED
+                    # Ensure evaluation ID is available even if evaluation object itself might be in a bad state from an error
+                    eval_id_for_log = evaluation.id if evaluation else "未知"
+                    print(f"[Scheduler] 评估 {eval_id_for_log} 处理失败: {e}")
             time.sleep(1) 

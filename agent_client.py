@@ -60,29 +60,6 @@ class AgentClient:
             print(f"[AgentClient] 发送分配计划到节点 {node_id} 失败: {e}")
             return None
 
-    def get_allocation_status(self, node_id: str, allocation_id: str) -> Optional[Dict]:
-        """获取分配计划的执行状态"""
-        if node_id not in self.agent_endpoints:
-            print(f"[AgentClient] 错误：未找到节点 {node_id} 的agent endpoint")
-            return None
-
-        try:
-            endpoint = f"{self.agent_endpoints[node_id]}/allocations/{allocation_id}"
-            response = requests.get(
-                endpoint,
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"[AgentClient] 获取分配状态失败: {response.status_code}")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            print(f"[AgentClient] 获取分配状态失败: {e}")
-            return None 
-
     def stop_allocation(self, node_id: str, allocation_id: str) -> bool:
         """通知agent停止分配"""
         if node_id not in self.agent_endpoints:

@@ -2,15 +2,18 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 from leader import Leader
-from scheduler import Scheduler
+# from scheduler import Scheduler # Scheduler is now initialized by Leader
 from node_manager import NodeManager
 
 # 创建Flask应用
 app = Flask(__name__)
 CORS(app)  # 启用CORS支持
 node_manager = NodeManager()
-leader = Leader(node_manager)
-scheduler = Scheduler(node_manager)
+# Initialize Leader, which will initialize Scheduler internally
+leader = Leader(node_manager) 
+# scheduler = Scheduler(node_manager) # This line is problematic due to new dependency
+# Access scheduler via leader if needed for direct calls, e.g., leader.scheduler
+scheduler = leader.scheduler # Make scheduler accessible directly if server routes need it
 
 @app.route('/register', methods=['POST'])
 def register_node():
@@ -72,7 +75,7 @@ def submit_job():
     
     evaluation = scheduler.create_evaluation(data)
     if evaluation:
-        leader.enqueue_evaluation(evaluation)
+        scheduler.enqueue_evaluation(evaluation)
         print(f"[API] 作业评估已加入队列，评估ID: {evaluation.id}")
         return jsonify({
             "job_id": evaluation.job.id,
@@ -101,7 +104,7 @@ def update_job(job_id):
         return jsonify({"error": "无法创建评估"}), 400
     
     # 将评估加入队列
-    leader.enqueue_evaluation(evaluation)
+    scheduler.enqueue_evaluation(evaluation)
     print(f"[Server] 作业更新评估已加入队列: {evaluation.id}")
     
     return jsonify({
@@ -217,7 +220,7 @@ def restart_job(job_id):
         return jsonify({"error": "无法创建评估"}), 400
     
     # 将评估加入队列
-    leader.enqueue_evaluation(evaluation)
+    scheduler.enqueue_evaluation(evaluation)
     print(f"[Server] 作业重启评估已加入队列: {evaluation.id}")
     
     return jsonify({
