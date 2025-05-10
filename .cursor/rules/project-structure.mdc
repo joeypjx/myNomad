@@ -1,0 +1,29 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# myNomad 项目结构指南
+
+## 核心组件
+
+### 服务器端组件
+- [server.py](mdc:server.py) - 主服务器入口，提供RESTful API接口
+- [node_manager.py](mdc:node_manager.py) - 节点管理器，负责集群状态管理
+- [scheduler.py](mdc:scheduler.py) - 调度器，处理作业调度决策
+- [scheduler_planner.py](mdc:scheduler_planner.py) - 调度规划器，生成具体的分配计划
+- [allocation_executor.py](mdc:allocation_executor.py) - 分配执行器，执行调度计划
+- [agent_communicator.py](mdc:agent_communicator.py) - Agent通信器，与节点代理通信
+- [models.py](mdc:models.py) - 数据模型定义，包含所有核心业务对象
+
+### 数据模型
+- Job - 作业定义
+- TaskGroup - 任务组
+- Task - 具体任务
+- Allocation - 分配实例
+- 各种状态枚举（JobStatus, TaskStatus等）
+
+## 文件组织
+- 所有核心组件都在根目录下
+- 每个组件都是独立的Python模块
+- 使用SQLite数据库存储状态（nomad.db）

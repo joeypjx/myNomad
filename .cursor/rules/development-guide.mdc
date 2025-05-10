@@ -1,0 +1,43 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# myNomad 开发指南
+
+## 代码规范
+- 使用Python 3.8+
+- 遵循PEP 8编码规范
+- 所有类和方法都需要文档字符串
+- 使用类型注解
+
+## 扩展开发
+### 添加新功能
+1. 减少心跳负载
+   - 修改 [node_manager.py](mdc:node_manager.py) 中的心跳机制
+   - 调整 [node_health_monitor.py](mdc:node_health_monitor.py) 的检测逻辑
+
+2. 增加资源收集和事件通知API
+   - 在 [server.py](mdc:server.py) 添加新的API端点
+   - 在 [agent_communicator.py](mdc:agent_communicator.py) 实现通信逻辑
+
+3. 增加数据库表类型
+   - 在 [models.py](mdc:models.py) 定义新的数据模型
+   - 更新数据库迁移脚本
+
+4. 实现更复杂的调度算法
+   - 修改 [scheduler.py](mdc:scheduler.py) 的调度逻辑
+   - 在 [scheduler_planner.py](mdc:scheduler_planner.py) 添加新的约束处理
+
+## 测试指南
+- 单元测试：使用pytest
+- 集成测试：使用pytest-asyncio
+- 性能测试：使用locust
+
+## 部署说明
+- 使用SQLite作为默认数据库
+- 支持Docker容器化部署
+- 需要配置环境变量：
+  - NOMAD_DB_PATH
+  - NOMAD_LOG_LEVEL
+  - NOMAD_SERVER_PORT
