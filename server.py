@@ -4,6 +4,7 @@ import json
 from allocation_executor import AllocationExecutor
 from scheduler import Scheduler
 from node_manager import NodeManager
+import os
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -16,6 +17,37 @@ scheduler = Scheduler(node_manager)
 scheduler.set_executor(allocation_executor)
 
 print("[Server] 所有组件初始化完成，服务准备就绪")
+
+# 测试环境的密钥
+TEST_API_KEY = os.getenv('TEST_API_KEY', 'test_key_123')
+
+@app.route('/test/clear-all', methods=['POST'])
+def clear_all_data():
+    """清空所有数据的测试接口"""
+    print("\n[API] 收到清空数据请求")
+    
+    # 验证API密钥
+    api_key = request.headers.get('X-API-Key')
+    if not api_key or api_key != TEST_API_KEY:
+        print("[API] 错误：无效的API密钥")
+        return jsonify({"error": "Invalid API key"}), 401
+    
+    try:
+        # 清空所有数据
+        node_manager.clear_all_data()
+        print("[API] 所有数据已清空")
+        return jsonify({
+            "message": "所有数据已清空",
+            "cleared_items": {
+                "jobs": "所有作业",
+                "nodes": "所有节点",
+                "templates": "所有模板",
+                "allocations": "所有分配"
+            }
+        }), 200
+    except Exception as e:
+        print(f"[API] 清空数据时出错: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/register', methods=['POST'])
 def register_node():
@@ -59,6 +91,78 @@ def handle_heartbeat():
     else:
         return jsonify({"error": "Failed to process heartbeat"}), 500
 
+@app.route('/templates', methods=['POST'])
+def create_template():
+    """创建新的作业模板"""
+    print("\n[API] 收到创建作业模板请求")
+    data = request.get_json()
+    if not data:
+        print("[API] 错误：未提供模板数据")
+        return jsonify({"error": "No data provided"}), 400
+    
+    required_fields = ["name", "task_groups"]
+    if not all(field in data for field in required_fields):
+        print("[API] 错误：缺少必要字段")
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    success, result = node_manager.create_job_template(data)
+    if success:
+        print(f"[API] 成功创建作业模板: {result}")
+        return jsonify({
+            "template_id": result,
+            "message": "作业模板创建成功"
+        }), 200
+    else:
+        print(f"[API] 创建作业模板失败: {result}")
+        return jsonify({"error": result}), 500
+
+@app.route('/templates', methods=['GET'])
+def list_templates():
+    """获取所有作业模板"""
+    print("\n[API] 收到获取作业模板列表请求")
+    templates = node_manager.list_job_templates()
+    return jsonify({
+        "templates": templates,
+        "count": len(templates)
+    })
+
+@app.route('/templates/<template_id>', methods=['GET'])
+def get_template(template_id):
+    """获取特定作业模板详情"""
+    print(f"\n[API] 收到获取作业模板详情请求: {template_id}")
+    template = node_manager.get_job_template(template_id)
+    if not template:
+        return jsonify({"error": "模板不存在"}), 404
+    return jsonify(template)
+
+@app.route('/templates/<template_id>', methods=['PUT'])
+def update_template(template_id):
+    """更新作业模板"""
+    print(f"\n[API] 收到更新作业模板请求: {template_id}")
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    success = node_manager.update_job_template(template_id, data)
+    if success:
+        return jsonify({
+            "message": "作业模板更新成功"
+        }), 200
+    else:
+        return jsonify({"error": "更新作业模板失败"}), 500
+
+@app.route('/templates/<template_id>', methods=['DELETE'])
+def delete_template(template_id):
+    """删除作业模板"""
+    print(f"\n[API] 收到删除作业模板请求: {template_id}")
+    success = node_manager.delete_job_template(template_id)
+    if success:
+        return jsonify({
+            "message": "作业模板删除成功"
+        }), 200
+    else:
+        return jsonify({"error": "删除作业模板失败"}), 500
+
 @app.route('/jobs', methods=['POST'])
 def submit_job():
     """提交作业"""
@@ -70,12 +174,34 @@ def submit_job():
     
     print(f"[API] 作业数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
     
-    required_fields = ["task_groups"]
-    if not all(field in data for field in required_fields):
-        print("[API] 错误：缺少必要字段")
-        return jsonify({"error": "Missing required fields"}), 400
+    # 检查是否使用模板
+    template_id = data.get("template_id")
+    if template_id:
+        # 从模板创建作业
+        template = node_manager.get_job_template(template_id)
+        if not template:
+            return jsonify({"error": "指定的模板不存在"}), 404
+        
+        # 使用模板数据作为基础，允许覆盖特定字段
+        job_data = {
+            "task_groups": template["task_groups"],
+            "constraints": template["constraints"]
+        }
+        
+        # 允许覆盖模板中的字段
+        if "task_groups" in data:
+            job_data["task_groups"] = data["task_groups"]
+        if "constraints" in data:
+            job_data["constraints"] = data["constraints"]
+    else:
+        # 直接使用提交的数据
+        required_fields = ["task_groups"]
+        if not all(field in data for field in required_fields):
+            print("[API] 错误：缺少必要字段")
+            return jsonify({"error": "Missing required fields"}), 400
+        job_data = data
     
-    evaluation = scheduler.create_evaluation(data)
+    evaluation = scheduler.create_evaluation(job_data)
     if evaluation:
         scheduler.enqueue_evaluation(evaluation)
         print(f"[API] 作业评估已加入队列，评估ID: {evaluation.id}")

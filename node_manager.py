@@ -212,6 +212,19 @@ class NodeManager:
                 FOREIGN KEY(allocation_id) REFERENCES allocations(allocation_id)
             )
         ''')
+
+        # 创建作业模板表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS job_templates (
+                template_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                task_groups TEXT NOT NULL,
+                constraints TEXT,
+                created_at REAL,
+                updated_at REAL
+            )
+        ''')
         
         conn.commit()
         conn.close()
@@ -875,7 +888,7 @@ class NodeManager:
 
         except Exception as e:
             print(f"[NodeManager] 检查资源时出错: {e}")
-            return False
+            return False 
 
     def delete_job(self, job_id: str) -> bool:
         """删除作业及其所有相关资源
@@ -885,7 +898,7 @@ class NodeManager:
         """
         print(f"\n[NodeManager] 警告：直接使用NodeManager.delete_job方法已被弃用")
         print(f"[NodeManager] 建议使用AllocationExecutor.delete_job来代替")
-        
+            
         # 兼容性逻辑 - 之前的方法依赖于stop_job，但现在stop_job不再执行实际操作
         # 因此需要手动处理数据库清理
         try:
@@ -961,4 +974,228 @@ class NodeManager:
             
         except Exception as e:
             print(f"[NodeManager] 清理作业数据时出错: {e}")
+            return False 
+
+    def create_job_template(self, template_data: Dict) -> Tuple[bool, str]:
+        """创建新的作业模板
+        
+        Args:
+            template_data: 包含模板信息的字典，必须包含name和task_groups字段
+            
+        Returns:
+            Tuple[bool, str]: (是否成功, 模板ID或错误信息)
+        """
+        try:
+            if not template_data.get("name") or not template_data.get("task_groups"):
+                return False, "模板名称和任务组配置是必需的"
+                
+            template_id = str(uuid.uuid4())
+            current_time = time.time()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO job_templates 
+                (template_id, name, description, task_groups, constraints, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                template_id,
+                template_data["name"],
+                template_data.get("description", ""),
+                json.dumps(template_data["task_groups"]),
+                json.dumps(template_data.get("constraints", {})),
+                current_time,
+                current_time
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 成功创建作业模板: {template_id}")
+            return True, template_id
+            
+        except Exception as e:
+            print(f"[NodeManager] 创建作业模板时出错: {e}")
+            return False, str(e)
+
+    def get_job_template(self, template_id: str) -> Optional[Dict]:
+        """获取作业模板详情"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT template_id, name, description, task_groups, constraints, created_at, updated_at
+                FROM job_templates
+                WHERE template_id = ?
+            ''', (template_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {
+                    "template_id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "task_groups": json.loads(row[3]),
+                    "constraints": json.loads(row[4]),
+                    "created_at": row[5],
+                    "updated_at": row[6]
+                }
+            return None
+            
+        except Exception as e:
+            print(f"[NodeManager] 获取作业模板时出错: {e}")
+            return None
+
+    def list_job_templates(self) -> List[Dict]:
+        """获取所有作业模板"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT template_id, name, description, created_at, updated_at
+                FROM job_templates
+                ORDER BY created_at DESC
+            ''')
+            
+            templates = []
+            for row in cursor.fetchall():
+                templates.append({
+                    "template_id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "created_at": row[3],
+                    "updated_at": row[4]
+                })
+            
+            conn.close()
+            return templates
+            
+        except Exception as e:
+            print(f"[NodeManager] 获取作业模板列表时出错: {e}")
+            return []
+
+    def update_job_template(self, template_id: str, template_data: Dict) -> bool:
+        """更新作业模板"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 检查模板是否存在
+            cursor.execute('SELECT 1 FROM job_templates WHERE template_id = ?', (template_id,))
+            if not cursor.fetchone():
+                return False
+            
+            # 构建更新语句
+            update_fields = []
+            params = []
+            
+            if "name" in template_data:
+                update_fields.append("name = ?")
+                params.append(template_data["name"])
+            
+            if "description" in template_data:
+                update_fields.append("description = ?")
+                params.append(template_data["description"])
+            
+            if "task_groups" in template_data:
+                update_fields.append("task_groups = ?")
+                params.append(json.dumps(template_data["task_groups"]))
+            
+            if "constraints" in template_data:
+                update_fields.append("constraints = ?")
+                params.append(json.dumps(template_data["constraints"]))
+            
+            update_fields.append("updated_at = ?")
+            params.append(time.time())
+            
+            # 添加模板ID到参数列表
+            params.append(template_id)
+            
+            # 执行更新
+            cursor.execute(f'''
+                UPDATE job_templates 
+                SET {", ".join(update_fields)}
+                WHERE template_id = ?
+            ''', params)
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 成功更新作业模板: {template_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 更新作业模板时出错: {e}")
+            return False
+
+    def delete_job_template(self, template_id: str) -> bool:
+        """删除作业模板"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('DELETE FROM job_templates WHERE template_id = ?', (template_id,))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[NodeManager] 成功删除作业模板: {template_id}")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 删除作业模板时出错: {e}")
+            return False 
+
+    def clear_all_data(self) -> bool:
+        """清空所有数据库表
+        
+        注意：此方法会删除所有数据，包括：
+        - 所有作业
+        - 所有节点
+        - 所有分配
+        - 所有任务状态
+        - 所有作业模板
+        
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            print("\n[NodeManager] 开始清空所有数据")
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 按照依赖关系顺序删除数据
+            # 1. 先删除任务状态（依赖于分配）
+            cursor.execute('DELETE FROM task_status')
+            print("[NodeManager] 已清空任务状态表")
+            
+            # 2. 删除分配（依赖于作业和节点）
+            cursor.execute('DELETE FROM allocations')
+            print("[NodeManager] 已清空分配表")
+            
+            # 3. 删除作业
+            cursor.execute('DELETE FROM jobs')
+            print("[NodeManager] 已清空作业表")
+            
+            # 4. 删除节点
+            cursor.execute('DELETE FROM nodes')
+            print("[NodeManager] 已清空节点表")
+            
+            # 5. 删除作业模板
+            cursor.execute('DELETE FROM job_templates')
+            print("[NodeManager] 已清空作业模板表")
+            
+            conn.commit()
+            conn.close()
+            
+            print("[NodeManager] 所有数据已清空")
+            return True
+            
+        except Exception as e:
+            print(f"[NodeManager] 清空数据时出错: {e}")
             return False 

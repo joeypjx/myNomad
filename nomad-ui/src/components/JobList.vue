@@ -2,6 +2,7 @@
   <div class="job-list">
     <!-- 顶部操作栏 -->
     <div class="top-actions">
+      <el-button type="success" @click="showSaveTemplateDialog()">保存作业模板</el-button>
       <el-button type="primary" @click="showSubmitDialog()">提交新作业</el-button>
     </div>
 
@@ -160,11 +161,82 @@
             />
           </el-form-item>
         </el-form>
+
+        <!-- 模板列表 -->
+        <div v-if="!isUpdate" class="template-list">
+          <h3>选择作业模板</h3>
+          <el-table :data="templates" style="width: 100%" @row-click="handleTemplateSelect">
+            <el-table-column prop="name" label="模板名称" width="180" />
+            <el-table-column prop="description" label="描述" />
+            <el-table-column prop="created_at" label="创建时间" width="180">
+              <template #default="{ row }">
+                {{ formatDate(row.created_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="200">
+              <template #default="{ row }">
+                <el-button type="primary" link @click.stop="handleTemplateSelect(row)">
+                  选择
+                </el-button>
+                <el-button type="danger" link @click.stop="handleDeleteTemplate(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="submitDialogVisible = false">取消</el-button>
           <el-button type="primary" @click="handleSubmitJob">确定</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- 保存模板对话框 -->
+    <el-dialog
+      v-model="saveTemplateDialogVisible"
+      title="保存作业模板"
+      width="80%"
+      :close-on-click-modal="false"
+      :modal="true"
+      :lock-scroll="true"
+      :show-close="true"
+      :center="false"
+      :fullscreen="false"
+      class="template-dialog"
+      top="5vh"
+    >
+      <div class="template-form">
+        <el-form :model="templateForm" label-width="120px">
+          <el-form-item label="模板名称" required>
+            <el-input v-model="templateForm.name" placeholder="请输入模板名称" />
+          </el-form-item>
+          <el-form-item label="模板描述">
+            <el-input
+              v-model="templateForm.description"
+              type="textarea"
+              :rows="3"
+              placeholder="请输入模板描述"
+            />
+          </el-form-item>
+          <el-form-item label="作业配置" required>
+            <el-input
+              v-model="templateForm.task_groups"
+              type="textarea"
+              :rows="20"
+              :autosize="{ minRows: 20, maxRows: 30 }"
+              placeholder="请输入JSON格式的作业配置"
+              class="config-textarea"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="saveTemplateDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSaveTemplate">保存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -190,6 +262,17 @@ const submitDialogVisible = ref(false)
 const isUpdate = ref(false)
 const jobId = ref('')
 const jobConfig = ref('')
+
+// 保存模板相关的响应式变量
+const saveTemplateDialogVisible = ref(false)
+const templateForm = ref({
+  name: '',
+  description: '',
+  task_groups: ''
+})
+
+// 模板列表相关的响应式变量
+const templates = ref([])
 
 // 获取状态对应的类型
 function getStatusType(status: JobStatus) {
@@ -298,6 +381,58 @@ async function handleRestartJob(jobId: string) {
   }
 }
 
+// 获取模板列表
+async function fetchTemplates() {
+  try {
+    const response = await fetch('http://localhost:8500/templates')
+    if (!response.ok) {
+      throw new Error('获取模板列表失败')
+    }
+    const data = await response.json()
+    templates.value = data.templates
+  } catch (error) {
+    console.error('获取模板列表时出错:', error)
+    ElMessage.error('获取模板列表失败')
+  }
+}
+
+// 格式化日期
+function formatDate(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// 处理模板选择
+async function handleTemplateSelect(template: any) {
+  try {
+    // 获取模板详情
+    const response = await fetch(`http://localhost:8500/templates/${template.template_id}`)
+    if (!response.ok) {
+      throw new Error('获取模板详情失败')
+    }
+    const templateDetail = await response.json()
+    
+    // 构造作业配置
+    const config = {
+      task_groups: templateDetail.task_groups,
+      constraints: templateDetail.constraints
+    }
+    
+    // 更新作业配置
+    jobConfig.value = JSON.stringify(config, null, 2)
+    ElMessage.success('已加载模板配置')
+  } catch (error) {
+    console.error('加载模板配置时出错:', error)
+    ElMessage.error('加载模板配置失败')
+  }
+}
+
 // 显示提交对话框
 function showSubmitDialog(job?: any) {
   isUpdate.value = !!job
@@ -334,6 +469,8 @@ function showSubmitDialog(job?: any) {
         region: "us-west"
       }
     }, null, 2)
+    // 获取模板列表
+    fetchTemplates()
   }
   submitDialogVisible.value = true
 }
@@ -360,6 +497,121 @@ async function handleSubmitJob() {
   } catch (error) {
     console.error('提交作业失败:', error)
     ElMessage.error(isUpdate.value ? '更新作业失败' : '提交作业失败')
+  }
+}
+
+// 显示保存模板对话框
+function showSaveTemplateDialog() {
+  // 重置表单
+  templateForm.value = {
+    name: '',
+    description: '',
+    task_groups: JSON.stringify({
+      task_groups: [
+        {
+          name: "example_group",
+          tasks: [
+            {
+              name: "example_task",
+              resources: {
+                cpu: 100,
+                memory: 128
+              },
+              config: {
+                image: "nginx:latest",
+                port: 80
+              }
+            }
+          ]
+        }
+      ],
+      constraints: {
+        region: "us-west"
+      }
+    }, null, 2)
+  }
+  saveTemplateDialogVisible.value = true
+}
+
+// 处理保存模板
+async function handleSaveTemplate() {
+  try {
+    // 验证必填字段
+    if (!templateForm.value.name) {
+      ElMessage.error('请输入模板名称')
+      return
+    }
+
+    // 解析JSON配置
+    let taskGroups
+    try {
+      taskGroups = JSON.parse(templateForm.value.task_groups)
+    } catch (e) {
+      ElMessage.error('作业配置JSON格式错误')
+      return
+    }
+
+    // 构造模板数据
+    const templateData = {
+      name: templateForm.value.name,
+      description: templateForm.value.description,
+      task_groups: taskGroups.task_groups,
+      constraints: taskGroups.constraints
+    }
+
+    // 调用后端API保存模板
+    const response = await fetch('http://localhost:8500/templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(templateData)
+    })
+
+    if (!response.ok) {
+      throw new Error('保存模板失败')
+    }
+
+    const result = await response.json()
+    ElMessage.success('模板保存成功')
+    saveTemplateDialogVisible.value = false
+  } catch (error) {
+    console.error('保存模板时出错:', error)
+    ElMessage.error('保存模板失败')
+  }
+}
+
+// 处理删除模板
+async function handleDeleteTemplate(template: any) {
+  try {
+    // 显示确认对话框
+    await ElMessageBox.confirm(
+      `确定要删除模板 "${template.name}" 吗？`,
+      '警告',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    // 调用删除API
+    const response = await fetch(`http://localhost:8500/templates/${template.template_id}`, {
+      method: 'DELETE'
+    })
+    
+    if (!response.ok) {
+      throw new Error('删除模板失败')
+    }
+    
+    // 删除成功后刷新列表
+    await fetchTemplates()
+    ElMessage.success('模板删除成功')
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除模板时出错:', error)
+      ElMessage.error('删除模板失败')
+    }
   }
 }
 
@@ -539,5 +791,49 @@ onUnmounted(() => {
   width: 100%;
   font-family: monospace;
   min-height: 400px !important;
+}
+
+.template-form {
+  padding: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.template-form :deep(.el-form-item__content) {
+  width: 100%;
+}
+
+.template-form :deep(.el-input),
+.template-form :deep(.el-textarea) {
+  width: 100%;
+}
+
+.template-form :deep(.config-textarea .el-textarea__inner) {
+  font-family: monospace;
+  min-height: 400px !important;
+}
+
+.template-list {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #ebeef5;
+}
+
+.template-list h3 {
+  margin-bottom: 15px;
+  color: #303133;
+  font-size: 16px;
+}
+
+.template-list :deep(.el-table) {
+  margin-top: 10px;
+}
+
+.template-list :deep(.el-table__row) {
+  cursor: pointer;
+}
+
+.template-list :deep(.el-table__row:hover) {
+  background-color: #f5f7fa;
 }
 </style> 

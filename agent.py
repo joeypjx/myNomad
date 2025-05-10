@@ -4,6 +4,7 @@ import psutil
 import requests
 import uuid
 import json
+import os
 from typing import Dict, List
 from flask import Flask, request, jsonify
 from models import AllocationStatus, TaskStatus, TaskType
@@ -130,7 +131,7 @@ class TaskAllocation:
 class NodeAgent:
     def __init__(self, server_url: str, region: str, agent_port: int):
         self.server_url = server_url
-        self.node_id = str(uuid.uuid4())
+        self.node_id = self._get_or_create_node_id()
         self.region = region
         self.healthy = True
         self.heartbeat_interval = 5  # 心跳间隔（秒）
@@ -142,6 +143,32 @@ class NodeAgent:
         # 创建Flask应用
         self.app = Flask(__name__)
         self.setup_routes()
+
+    def _get_or_create_node_id(self) -> str:
+        """获取或创建节点ID"""
+        node_id_file = "node_id.txt"
+        
+        # 尝试从文件读取节点ID
+        if os.path.exists(node_id_file):
+            try:
+                with open(node_id_file, 'r') as f:
+                    node_id = f.read().strip()
+                    if node_id:
+                        print(f"[Agent] 从文件加载节点ID: {node_id}")
+                        return node_id
+            except Exception as e:
+                print(f"[Agent] 读取节点ID文件时出错: {e}")
+        
+        # 如果文件不存在或读取失败，创建新的节点ID
+        new_node_id = str(uuid.uuid4())
+        try:
+            with open(node_id_file, 'w') as f:
+                f.write(new_node_id)
+            print(f"[Agent] 创建新的节点ID: {new_node_id}")
+        except Exception as e:
+            print(f"[Agent] 保存节点ID到文件时出错: {e}")
+        
+        return new_node_id
 
     def setup_routes(self):
         """设置API路由"""
