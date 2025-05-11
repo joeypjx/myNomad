@@ -158,7 +158,7 @@ class NodeManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # 创建节点表
+        # 创建节点表 todo: 去掉 region，增加 IP 地址
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS nodes (
                 node_id TEXT PRIMARY KEY,
