@@ -26,7 +26,15 @@ class Scheduler:
         print("[Scheduler] 已设置分配执行器引用")
 
     def create_evaluation(self, job_data: Dict, job_id: str = None) -> Optional[SchedulerPlanner]:
-        """创建新的评估"""
+        """创建新的评估并加入队列
+        
+        Args:
+            job_data: 作业数据
+            job_id: 作业ID，如果提供则表示更新现有作业
+            
+        Returns:
+            Optional[SchedulerPlanner]: 创建的评估对象，如果创建失败则返回None
+        """
         print("\n[Scheduler] 收到新的作业评估请求")
         
         # 如果提供了job_id，说明是更新操作
@@ -69,6 +77,10 @@ class Scheduler:
         )
         
         print(f"[Scheduler] 创建评估成功，评估ID: {evaluation.id}")
+        
+        # 自动将评估加入队列
+        self.enqueue_evaluation(evaluation)
+        
         return evaluation
 
     def enqueue_evaluation(self, evaluation: SchedulerPlanner):

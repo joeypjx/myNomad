@@ -4,6 +4,7 @@ import json
 from allocation_executor import AllocationExecutor
 from scheduler import Scheduler
 from node_manager import NodeManager
+from resource_manager import ResourceManager
 import os
 
 # 创建Flask应用
@@ -12,6 +13,7 @@ CORS(app)  # 启用CORS支持
 
 # 初始化组件 - 按照正确的顺序创建并解决依赖
 node_manager = NodeManager()
+resource_manager = ResourceManager(node_manager)
 allocation_executor = AllocationExecutor(node_manager)
 scheduler = Scheduler(node_manager)
 scheduler.set_executor(allocation_executor)
@@ -85,7 +87,7 @@ def handle_heartbeat():
     if not all(field in data for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
     
-    success = node_manager.update_heartbeat(data)
+    success = resource_manager.handle_heartbeat(data)
     if success:
         return jsonify({"message": "Heartbeat received"}), 200
     else:
@@ -203,12 +205,11 @@ def submit_job():
     
     evaluation = scheduler.create_evaluation(job_data)
     if evaluation:
-        scheduler.enqueue_evaluation(evaluation)
-        print(f"[API] 作业评估已加入队列，评估ID: {evaluation.id}")
+        print(f"[API] 作业评估已创建，评估ID: {evaluation.id}")
         return jsonify({
             "job_id": evaluation.job.id,
             "evaluation_id": evaluation.id,
-            "message": "作业评估已加入队列"
+            "message": "作业评估已创建并加入队列"
         }), 200
     else:
         print("[API] 作业提交失败")
@@ -231,14 +232,12 @@ def update_job(job_id):
     if not evaluation:
         return jsonify({"error": "无法创建评估"}), 400
     
-    # 将评估加入队列
-    scheduler.enqueue_evaluation(evaluation)
-    print(f"[Server] 作业更新评估已加入队列: {evaluation.id}")
+    print(f"[Server] 作业更新评估已创建: {evaluation.id}")
     
     return jsonify({
         "job_id": job_id,
         "evaluation_id": evaluation.id,
-        "message": "作业更新评估已加入队列"
+        "message": "作业更新评估已创建并加入队列"
     })
 
 @app.route('/jobs/<job_id>', methods=['DELETE'])
@@ -347,14 +346,12 @@ def restart_job(job_id):
     if not evaluation:
         return jsonify({"error": "无法创建评估"}), 400
     
-    # 将评估加入队列
-    scheduler.enqueue_evaluation(evaluation)
-    print(f"[Server] 作业重启评估已加入队列: {evaluation.id}")
+    print(f"[Server] 作业重启评估已创建: {evaluation.id}")
     
     return jsonify({
         "job_id": job_id,
         "evaluation_id": evaluation.id,
-        "message": "作业重启评估已加入队列"
+        "message": "作业重启评估已创建并加入队列"
     })
 
 if __name__ == "__main__":
