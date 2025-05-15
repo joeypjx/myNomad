@@ -115,7 +115,7 @@ def main():
                         },
                         "config": {
                             "image": "nginx:latest",
-                            "port": 80
+                            "port": 8000
                         }
                     },
                     {

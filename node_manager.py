@@ -66,6 +66,7 @@ class NodeManager:
                 error TEXT,
                 exit_code INTEGER,
                 last_update REAL,
+                message TEXT,
                 PRIMARY KEY (allocation_id, task_name),
                 FOREIGN KEY(allocation_id) REFERENCES allocations(allocation_id)
             )
@@ -161,8 +162,8 @@ class NodeManager:
                     for task_name, task_status in allocation_status["tasks"].items():
                         cursor.execute('''
                             INSERT OR REPLACE INTO task_status
-                            (allocation_id, task_name, status, start_time, end_time, error, exit_code, last_update)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            (allocation_id, task_name, status, start_time, end_time, error, exit_code, last_update, message)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             allocation_id,
                             task_name,
@@ -171,7 +172,8 @@ class NodeManager:
                             task_status["end_time"],
                             task_status.get("error"),
                             task_status.get("exit_code"),
-                            heartbeat_data["timestamp"]
+                            heartbeat_data["timestamp"],
+                            task_status.get("message")
                         ))
             
             conn.commit()
@@ -426,7 +428,7 @@ class NodeManager:
                     
                     # 获取分配的所有任务信息
                     cursor.execute("""
-                        SELECT task_name, resources, config, status, start_time, end_time, exit_code
+                        SELECT task_name, resources, config, status, start_time, end_time, exit_code, message
                         FROM task_status
                         WHERE allocation_id = ?
                     """, (allocation_id,))
@@ -434,14 +436,15 @@ class NodeManager:
                     
                     tasks_info = {}
                     for task in tasks:
-                        name, resources, config, task_status, task_start, task_end, exit_code = task
+                        name, resources, config, task_status, task_start, task_end, exit_code, message = task
                         tasks_info[name] = {
                             "resources": json.loads(resources) if resources else {},
                             "config": json.loads(config) if config else {},
                             "status": task_status,
                             "start_time": task_start,
                             "end_time": task_end,
-                            "exit_code": exit_code
+                            "exit_code": exit_code,
+                            "message": message
                         }
                     
                     allocations_info.append({
@@ -523,13 +526,14 @@ class NodeManager:
             print(f"[NodeManager] 获取节点分配信息时出错: {e}")
             return []
 
+    # unuse
     def get_allocation_tasks(self, allocation_id: str) -> List[Dict]:
         """获取分配的所有任务状态"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT task_name, status, start_time, end_time, error, exit_code
+                SELECT task_name, status, start_time, end_time, error, exit_code, message
                 FROM task_status
                 WHERE allocation_id = ?
             ''', (allocation_id,))
@@ -544,12 +548,13 @@ class NodeManager:
                     "start_time": row[2],
                     "end_time": row[3],
                     "error": row[4],
-                    "exit_code": row[5]
+                    "exit_code": row[5],
+                    "message": row[6]
                 })
             return tasks
         except Exception as e:
             print(f"[NodeManager] 获取任务状态信息时出错: {e}")
-            return [] 
+            return []
 
     def get_job_info(self, job_id: str) -> Optional[Dict]:
         """获取作业详细信息"""

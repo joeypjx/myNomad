@@ -21,6 +21,7 @@ class Task:
         self.process = None  # 存储进程ID或容器ID
         self.task_type = TaskType.CONTAINER if config.get("image") else TaskType.PROCESS
         self.exit_code = None  # 添加退出码字段
+        self.message = None  # 添加消息字段
 
     def update_status(self) -> bool:
         """更新任务的实际运行状态"""
@@ -38,11 +39,13 @@ class Task:
                         self.status = TaskStatus.FAILED
                         self.exit_code = process.wait(timeout=0)
                         self.end_time = time.time()
+                        self.message = f"进程异常退出，状态: {process.status()}"
                         return True
                 except psutil.NoSuchProcess:
                     if self.status == TaskStatus.RUNNING:
                         self.status = TaskStatus.FAILED
                         self.end_time = time.time()
+                        self.message = "进程不存在"
                     return False
                     
             elif self.task_type == TaskType.CONTAINER:
@@ -58,19 +61,23 @@ class Task:
                         self.exit_code = container_info["State"]["ExitCode"]
                         if self.exit_code == 0:
                             self.status = TaskStatus.COMPLETE
+                            self.message = "容器正常退出"
                         else:
                             self.status = TaskStatus.FAILED
+                            self.message = f"容器异常退出，退出码: {self.exit_code}"
                         self.end_time = time.time()
                         return True
                     else:
                         # 其他状态（如created, paused等）
                         print(f"[Agent] 容器 {self.process} 状态: {container.status}")
                         self.status = TaskStatus.PENDING
+                        self.message = f"容器状态: {container.status}"
                         return True
                 except docker.errors.NotFound:
                     if self.status == TaskStatus.RUNNING:
                         self.status = TaskStatus.FAILED
                         self.end_time = time.time()
+                        self.message = "容器不存在"
                     return False
                     
         except Exception as e:
@@ -78,6 +85,7 @@ class Task:
             if self.status == TaskStatus.RUNNING:
                 self.status = TaskStatus.FAILED
                 self.end_time = time.time()
+                self.message = f"更新状态时出错: {str(e)}"
             return False
 
 class TaskAllocation:
@@ -287,16 +295,31 @@ class NodeAgent:
                 # 使用Docker API启动容器
                 import docker
                 client = docker.from_env()
-                container = client.containers.run(
-                    task.config["image"],
-                    detach=True,
-                    ports={f"{task.config['port']}/tcp": task.config['port']} if "port" in task.config else None,
-                    mem_limit=f"{task.resources['memory']}m",
-                    cpu_quota=int(task.resources['cpu'] * 1000),  # 转换为微秒配额
-                    cpu_period=100000  # 默认的CPU周期为100ms
-                )
-                task.process = container.id
-                print(f"[Agent] 容器已启动: {container.id}")
+                try:
+                    # 先创建容器
+                    container = client.containers.create(
+                        task.config["image"],
+                        detach=True,
+                        ports={f"{task.config['port']}/tcp": task.config['port']} if "port" in task.config else None,
+                        mem_limit=f"{task.resources['memory']}m",
+                        cpu_quota=int(task.resources['cpu'] * 1000),  # 转换为微秒配额
+                        cpu_period=100000  # 默认的CPU周期为100ms
+                    )
+                    task.process = container.id
+                    task.message = f"容器ID: {container.id}"  # 添加容器ID到message
+                    print(f"[Agent] 容器已创建: {container.id}")
+                    
+                    # 然后启动容器
+                    container.start()
+                    print(f"[Agent] 容器已启动: {container.id}")
+                    
+                except Exception as e:
+                    error_msg = f"容器操作失败: {str(e)}"
+                    print(f"[Agent] {error_msg}")
+                    task.status = TaskStatus.FAILED
+                    task.end_time = time.time()
+                    task.message = error_msg
+                    allocation.status = AllocationStatus.FAILED
                 
             else:
                 # 启动普通进程
@@ -308,12 +331,15 @@ class NodeAgent:
                     stderr=subprocess.PIPE
                 )
                 task.process = process.pid
+                task.message = f"进程ID: {process.pid}"  # 添加进程ID到message
                 print(f"[Agent] 进程已启动: {process.pid}")
             
         except Exception as e:
-            print(f"[Agent] 任务执行失败: {allocation.id}/{task.name}, 错误: {e}")
+            error_msg = f"任务执行失败: {str(e)}"
+            print(f"[Agent] {error_msg}")
             task.status = TaskStatus.FAILED
             task.end_time = time.time()
+            task.message = error_msg
             allocation.status = AllocationStatus.FAILED
 
     def _monitor_tasks(self):
@@ -384,8 +410,10 @@ class NodeAgent:
                 tasks_status[task_name] = {
                     "status": task.status.value,
                     "start_time": task.start_time,
-                    "end_time": task.end_time
+                    "end_time": task.end_time,
+                    "message": task.message  # 添加message字段
                 }
+                print(f"[Agent] 心跳 - 任务状态: allocation_id={allocation_id}, task={task_name}, status={task.status.value}, message={task.message}")
             
             allocations_status[allocation_id] = {
                 "status": allocation.status.value,
@@ -393,6 +421,7 @@ class NodeAgent:
                 "end_time": allocation.end_time,
                 "tasks": tasks_status
             }
+            print(f"[Agent] 心跳 - 分配状态: allocation_id={allocation_id}, status={allocation.status.value}")
 
         heartbeat_data = {
             "node_id": self.node_id,
@@ -402,6 +431,8 @@ class NodeAgent:
             "allocations": allocations_status
         }
         
+        print(f"[Agent] 发送心跳: node_id={self.node_id}, healthy={self.healthy}")
+        
         try:
             response = requests.post(
                 f"{self.server_url}/heartbeat",
@@ -409,6 +440,8 @@ class NodeAgent:
             )
             if response.status_code != 200:
                 print(f"[Agent] 心跳发送失败: {response.status_code}")
+            else:
+                print(f"[Agent] 心跳发送成功")
         except Exception as e:
             print(f"[Agent] 心跳错误: {e}")
 
@@ -440,13 +473,14 @@ class NodeAgent:
                     continue
                     
                 if task.task_type == TaskType.CONTAINER:
-                    # 停止容器
+                    # 停止并删除容器
                     import docker
                     client = docker.from_env()
                     try:
                         container = client.containers.get(task.process)
                         container.stop(timeout=10)  # 给容器10秒的优雅停止时间
-                        print(f"[Agent] 容器 {task.process} 已停止")
+                        container.remove()  # 删除容器
+                        print(f"[Agent] 容器 {task.process} 已停止并删除")
                     except docker.errors.NotFound:
                         print(f"[Agent] 容器 {task.process} 不存在")
                         

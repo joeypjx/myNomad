@@ -71,8 +71,8 @@
 
         <!-- 任务信息表格 -->
         <el-table 
-          :data="allocation.tasks ? Object.entries(allocation.tasks).map(([name, task]) => ({
-            name,
+          :data="allocation.tasks ? Object.entries(allocation.tasks).map(([taskName, task]) => ({
+            taskName,
             ...task,
             resources: task.resources || { cpu: 0, memory: 0 },
             config: task.config || {}
@@ -80,7 +80,7 @@
           style="width: 100%" 
           class="task-table"
         >
-          <el-table-column prop="name" label="任务名称" width="180" />
+          <el-table-column prop="taskName" label="任务名称" width="180" />
           <el-table-column label="资源" width="200">
             <template #default="{ row }">
               <div>CPU: {{ row.resources?.cpu || 0 }}</div>
@@ -109,6 +109,21 @@
           <el-table-column label="退出码" width="100">
             <template #default="{ row }">
               {{ row.exit_code ?? '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="信息" min-width="200">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="row.message"
+                :content="row.message"
+                placement="top"
+                :show-after="500"
+              >
+                <div class="message-cell">
+                  {{ row.message }}
+                </div>
+              </el-tooltip>
+              <span v-else>-</span>
             </template>
           </el-table-column>
         </el-table>
@@ -835,5 +850,13 @@ onUnmounted(() => {
 
 .template-list :deep(.el-table__row:hover) {
   background-color: #f5f7fa;
+}
+
+.message-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+  cursor: help;
 }
 </style> 
