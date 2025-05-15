@@ -1,4 +1,3 @@
-
 **`server.py` (Master/Control Plane APIs)**
 
 1.  **`POST /register` - 节点注册**
@@ -6,7 +5,7 @@
         ```json
         {
             "node_id": "string (UUID)",
-            "region": "string",
+            "ip_address": "string",
             "resources": {
                 "cpu": "integer (e.g., Nomad CPU units)",
                 "memory": "integer (MB)"
@@ -42,7 +41,7 @@
             },
             "healthy": "boolean",
             "timestamp": "float (Unix timestamp)",
-            "allocations": { // Optional: Status of allocationsleger  on the node
+            "allocations": { // Optional: Status of allocations on the node
                 "<allocation_id_1>": {
                     "status": "string (e.g., running, complete, failed)",
                     "start_time": "float (Unix timestamp, nullable)",
@@ -53,7 +52,8 @@
                             "start_time": "float (Unix timestamp, nullable)",
                             "end_time": "float (Unix timestamp, nullable)",
                             "error": "string (nullable)",
-                            "exit_code": "integer (nullable)"
+                            "exit_code": "integer (nullable)",
+                            "message": "string (nullable, detailed status/error message)"
                         }
                         // ... other tasks
                     }
@@ -82,17 +82,12 @@
             "task_groups": [
                 {
                     "name": "string (Task group name)",
-                    "count": "integer (Number of instances of this task group)",
                     "tasks": [
                         {
                             "name": "string (Task name)",
-                            "driver": "string (e.g., docker, exec)", // Implied by config
                             "config": {
-                                // Driver-specific configuration
-                                // e.g., for docker:
                                 "image": "string (Docker image)",
                                 "port": "integer (Optional, host port to map)",
-                                // e.g., for exec:
                                 "command": "string (Command to execute)"
                             },
                             "resources": {
@@ -102,18 +97,16 @@
                         }
                         // ... other tasks in the group
                     ],
-                    "constraints": [ // Optional
+                    "constraints": [
                         {
-                            "attribute": "string (e.g., region, node_id, or custom attribute)",
+                            "attribute": "string (e.g., ip_address, node_id, or custom attribute)",
                             "operator": "string (e.g., =, !=, >, <, regex)",
-                            "value": "string"
+                            "value": "string or number"
                         }
-                    // ... other constraints
                     ]
                 }
-                // ... other task groups
-            ]
-            // "job_id": "string (Optional, if updating an existing job, though a PUT to /jobs/<job_id> is more conventional)"
+            ],
+            "constraints": {}
         }
         ```
     *   **响应 (Response Body - Success 200)**:
@@ -121,7 +114,7 @@
         {
             "job_id": "string (Generated or provided Job ID)",
             "evaluation_id": "string (ID of the evaluation created for this job submission)",
-            "message": "作业评估已加入队列"
+            "message": "作业评估已创建并加入队列"
         }
         ```
     *   **响应 (Response Body - Error 400/500)**:
@@ -148,7 +141,7 @@
         }
         ```
 
-5.  **`DELETE /jobs/<job_id>` - 停止作业** (Note: This is more like a "stop" operation rather than a full "delete" based on the handler `stop_job`. A separate `POST /jobs/<job_id>/delete` exists for actual deletion.)
+5.  **`DELETE /jobs/<job_id>` - 停止作业**
     *   **请求 (Request Body)**: None
     *   **响应 (Response Body - Success 200)**:
         ```json
@@ -171,33 +164,63 @@
             "jobs": [
                 {
                     "job_id": "string",
-                    "task_groups": [ /* همانطور که در POST /jobs */ ],
-                    "constraints": [ /* همانطور که در POST /jobs */ ],
-                    "status": "string (e.g., pending, running, complete, failed, dead, lost)",
+                    "task_groups": [
+                        {
+                            "name": "string",
+                            "tasks": [
+                                {
+                                    "name": "string",
+                                    "config": {
+                                        "image": "string",
+                                        "port": "integer",
+                                        "command": "string"
+                                    },
+                                    "resources": {
+                                        "cpu": "integer",
+                                        "memory": "integer (MB)"
+                                    }
+                                }
+                            ],
+                            "constraints": [
+                                {
+                                    "attribute": "string",
+                                    "operator": "string",
+                                    "value": "string or number"
+                                }
+                            ]
+                        }
+                    ],
+                    "constraints": {},
+                    "status": "string (e.g., pending, running, complete, failed, dead, lost, degraded, blocked)",
                     "allocations": [
                         {
                             "allocation_id": "string",
                             "node_id": "string",
-                            "task_group": "string (Name of the task group)",
-                            "status": "string (Allocation status)",
+                            "task_group": "string",
+                            "status": "string",
                             "start_time": "float (nullable)",
                             "end_time": "float (nullable)",
                             "tasks": {
                                 "<task_name_1>": {
-                                    "resources": { /* ... */ },
-                                    "config": { /* ... */ },
-                                    "status": "string (Task status)",
+                                    "resources": {
+                                        "cpu": "integer",
+                                        "memory": "integer (MB)"
+                                    },
+                                    "config": {
+                                        "image": "string",
+                                        "port": "integer",
+                                        "command": "string"
+                                    },
+                                    "status": "string",
                                     "start_time": "float (nullable)",
                                     "end_time": "float (nullable)",
-                                    "exit_code": "integer (nullable)"
+                                    "exit_code": "integer (nullable)",
+                                    "message": "string (nullable)"
                                 }
-                                // ... other tasks
                             }
                         }
-                        // ... other allocations for this job
                     ]
                 }
-                // ... other jobs
             ],
             "count": "integer (Number of jobs)"
         }
@@ -209,8 +232,33 @@
         ```json
         {
             "job_id": "string",
-            "task_groups": [ /* As in POST /jobs */ ],
-            "constraints": [ /* As in POST /jobs */ ],
+            "task_groups": [
+                {
+                    "name": "string",
+                    "tasks": [
+                        {
+                            "name": "string",
+                            "config": {
+                                "image": "string",
+                                "port": "integer",
+                                "command": "string"
+                            },
+                            "resources": {
+                                "cpu": "integer",
+                                "memory": "integer (MB)"
+                            }
+                        }
+                    ],
+                    "constraints": [
+                        {
+                            "attribute": "string",
+                            "operator": "string",
+                            "value": "string or number"
+                        }
+                    ]
+                }
+            ],
+            "constraints": {},
             "status": "string",
             "allocations": [
                 {
@@ -220,10 +268,7 @@
                     "status": "string",
                     "start_time": "float (nullable)",
                     "end_time": "float (nullable)"
-                    // Note: This endpoint doesn't seem to include detailed task status per allocation here,
-                    // unlike GET /jobs. It might be a simplified view.
                 }
-                // ... other allocations for this job
             ]
         }
         ```
@@ -242,11 +287,14 @@
             "nodes": [
                 {
                     "node_id": "string",
-                    "region": "string",
-                    "resources": { /* As in POST /register */ },
+                    "ip_address": "string",
+                    "resources": {
+                        "cpu": "integer (e.g., Nomad CPU units)",
+                        "memory": "integer (MB)"
+                    },
                     "healthy": "boolean",
                     "last_heartbeat": "float (Unix timestamp)",
-                    "allocations": [ // Allocations currently running on this node
+                    "allocations": [
                         {
                             "allocation_id": "string",
                             "job_id": "string",
@@ -255,10 +303,8 @@
                             "start_time": "float (nullable)",
                             "end_time": "float (nullable)"
                         }
-                        // ... other allocations on this node
                     ]
                 }
-                // ... other nodes
             ],
             "count": "integer (Number of nodes)"
         }
@@ -302,6 +348,174 @@
         }
         ```
 
+11. **`POST /test/clear-all` - (测试接口) 清空所有数据和表结构**
+    *   **请求 (Request Body)**: None
+    *   **请求头 (Headers)**:
+        *   `X-API-Key`: `string (Test API Key)`
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "message": "所有数据已清空",
+            "cleared_items": {
+                "jobs": "所有作业",
+                "nodes": "所有节点",
+                "allocations": "所有分配",
+                "task_status": "所有任务状态"
+            }
+        }
+        ```
+    *   **响应 (Response Body - Error 401/500)**:
+        ```json
+        {
+            "error": "string (Error message, e.g., 'Invalid API key')"
+        }
+        ```
+
+**作业模板API (Job Templates APIs)**
+
+1.  **`POST /templates` - 创建新的作业模板**
+    *   **请求 (Request Body)**:
+        ```json
+        {
+            "name": "string (Template name, required)",
+            "description": "string (Optional)",
+            "task_groups": [
+                {
+                    "name": "string",
+                    "tasks": [
+                        {
+                            "name": "string",
+                            "config": {
+                                "image": "string",
+                                "port": "integer",
+                                "command": "string"
+                            },
+                            "resources": {
+                                "cpu": "integer",
+                                "memory": "integer (MB)"
+                            }
+                        }
+                    ],
+                    "constraints": [
+                        {
+                            "attribute": "string",
+                            "operator": "string",
+                            "value": "string or number"
+                        }
+                    ]
+                }
+            ],
+            "constraints": {}
+        }
+        ```
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "template_id": "string (Generated Template ID)",
+            "message": "作业模板创建成功"
+        }
+        ```
+    *   **响应 (Response Body - Error 400/500)**:
+        ```json
+        {
+            "error": "string (Error message)"
+        }
+        ```
+
+2.  **`GET /templates` - 获取所有作业模板**
+    *   **请求 (Request Body)**: None
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "templates": [
+                {
+                    "template_id": "string",
+                    "name": "string",
+                    "description": "string (nullable)",
+                    "created_at": "float (Unix timestamp)",
+                    "updated_at": "float (Unix timestamp)"
+                }
+            ],
+            "count": "integer"
+        }
+        ```
+
+3.  **`GET /templates/<template_id>` - 获取特定作业模板详情**
+    *   **请求 (Request Body)**: None
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "template_id": "string",
+            "name": "string",
+            "description": "string (nullable)",
+            "task_groups": [
+                {
+                    "name": "string",
+                    "tasks": [
+                        {
+                            "name": "string",
+                            "config": {
+                                "image": "string",
+                                "port": "integer",
+                                "command": "string"
+                            },
+                            "resources": {
+                                "cpu": "integer",
+                                "memory": "integer (MB)"
+                            }
+                        }
+                    ],
+                    "constraints": [
+                        {
+                            "attribute": "string",
+                            "operator": "string",
+                            "value": "string or number"
+                        }
+                    ]
+                }
+            ],
+            "constraints": {},
+            "created_at": "float",
+            "updated_at": "float"
+        }
+        ```
+    *   **响应 (Response Body - Error 404)**:
+        ```json
+        {
+            "error": "模板不存在"
+        }
+        ```
+
+4.  **`PUT /templates/<template_id>` - 更新作业模板**
+    *   **请求 (Request Body)**: Fields to update from `POST /templates` structure.
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "message": "作业模板更新成功"
+        }
+        ```
+    *   **响应 (Response Body - Error 400/500)**:
+        ```json
+        {
+            "error": "string (Error message)"
+        }
+        ```
+
+5.  **`DELETE /templates/<template_id>` - 删除作业模板**
+    *   **请求 (Request Body)**: None
+    *   **响应 (Response Body - Success 200)**:
+        ```json
+        {
+            "message": "作业模板删除成功"
+        }
+        ```
+    *   **响应 (Response Body - Error 500)**:
+        ```json
+        {
+            "error": "string (Error message)"
+        }
+        ```
+
 **`agent.py` (Node Agent APIs)**
 
 1.  **`POST /allocations` - (由 Server 调用) 创建并运行新分配**
@@ -310,7 +524,7 @@
         {
             "allocation_id": "string (UUID)",
             "job_id": "string (UUID)",
-            "task_group": { // Details of the task group to run
+            "task_group": {
                 "name": "string (Task group name)",
                 "tasks": [
                     {
@@ -320,13 +534,11 @@
                             "memory": "integer (MB)"
                         },
                         "config": {
-                            // Driver-specific config, e.g.,
                             "image": "string (for docker)",
                             "port": "integer (optional, for docker, host port)",
                             "command": "string (for exec)"
                         }
                     }
-                    // ... other tasks in the group
                 ]
             }
         }
@@ -361,9 +573,7 @@
                     "status": "string (e.g., pending, running, complete, failed)",
                     "start_time": "float (Unix timestamp, nullable)",
                     "end_time": "float (Unix timestamp, nullable)"
-                    // "exit_code" and "error" might also be relevant here but not explicitly shown in route
                 }
-                // ... other tasks in this allocation
             }
         }
         ```
