@@ -1,5 +1,7 @@
 # myNomad - 分布式任务调度系统
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/joeypjx/myNomad)
+
 myNomad是一个轻量级分布式任务调度系统，参考了HashiCorp Nomad的设计理念，用于在分布式环境中高效地调度和管理工作负载。它支持容器和进程两种任务类型，提供了简单而强大的任务编排功能。
 
 ## 系统架构
