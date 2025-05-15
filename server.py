@@ -60,7 +60,7 @@ def register_node():
         print("[API] 错误：未提供节点数据")
         return jsonify({"error": "No data provided"}), 400
     
-    required_fields = ["node_id", "region", "resources", "healthy", "endpoint"]
+    required_fields = ["node_id", "ip_address", "resources", "healthy", "endpoint"]
     if not all(field in data for field in required_fields):
         print("[API] 错误：缺少必要字段")
         return jsonify({"error": "Missing required fields"}), 400

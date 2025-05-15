@@ -16,11 +16,11 @@ class NodeManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # 创建节点表 todo: 去掉 region，增加 IP 地址
+        # 创建节点表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS nodes (
                 node_id TEXT PRIMARY KEY,
-                region TEXT,
+                ip_address TEXT,
                 resources TEXT,
                 healthy INTEGER,
                 last_heartbeat REAL
@@ -90,15 +90,21 @@ class NodeManager:
     def register_node(self, node_data: Dict) -> bool:
         """注册新节点"""
         try:
+            # 检查必要字段
+            required_fields = ["node_id", "ip_address", "resources", "healthy"]
+            if not all(field in node_data for field in required_fields):
+                print(f"[NodeManager] 注册节点时缺少必要字段: {required_fields}")
+                return False
+
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT OR REPLACE INTO nodes (node_id, region, resources, healthy, last_heartbeat)
+                INSERT OR REPLACE INTO nodes (node_id, ip_address, resources, healthy, last_heartbeat)
                 VALUES (?, ?, ?, ?, ?)
             ''', (
                 node_data["node_id"],
-                node_data["region"],
+                node_data["ip_address"],
                 json.dumps(node_data["resources"]),
                 1 if node_data["healthy"] else 0,
                 time.time()
@@ -106,7 +112,7 @@ class NodeManager:
             
             conn.commit()
             conn.close()
-            print(f"[NodeManager] 节点 {node_data['node_id']} 注册成功")
+            print(f"[NodeManager] 节点 {node_data['node_id']} (IP: {node_data['ip_address']}) 注册成功")
             return True
         except Exception as e:
             print(f"[NodeManager] 注册节点时出错: {e}")
@@ -186,7 +192,7 @@ class NodeManager:
             
             nodes = [{
                 "node_id": row[0],
-                "region": row[1],
+                "ip_address": row[1],
                 "resources": row[2],
                 "healthy": bool(row[3]),
                 "last_heartbeat": row[4]
@@ -194,7 +200,7 @@ class NodeManager:
             
             print(f"[NodeManager] 当前可用节点数量: {len(nodes)}")
             for node in nodes:
-                print(f"[NodeManager] 节点 {node['node_id']} - 区域: {node['region']} - 资源: {node['resources']}")
+                print(f"[NodeManager] 节点 {node['node_id']} - IP: {node['ip_address']} - 资源: {node['resources']}")
             
             return nodes
         finally:
@@ -469,7 +475,7 @@ class NodeManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT node_id, region, resources, healthy, last_heartbeat 
+                SELECT node_id, ip_address, resources, healthy, last_heartbeat 
                 FROM nodes
             ''')
             rows = cursor.fetchall()
@@ -479,7 +485,7 @@ class NodeManager:
             for row in rows:
                 nodes.append({
                     "node_id": row[0],
-                    "region": row[1],
+                    "ip_address": row[1],
                     "resources": json.loads(row[2]),
                     "healthy": bool(row[3]),
                     "last_heartbeat": row[4]
@@ -1010,7 +1016,7 @@ class NodeManager:
             return False 
 
     def clear_all_data(self) -> bool:
-        """清空所有数据库表
+        """清空所有数据库表并删除表结构
         
         注意：此方法会删除所有数据，包括：
         - 所有作业
@@ -1019,41 +1025,43 @@ class NodeManager:
         - 所有任务状态
         - 所有作业模板
         
+        同时也会删除所有表结构，下次启动时会重新创建
+        
         Returns:
             bool: 操作是否成功
         """
         try:
-            print("\n[NodeManager] 开始清空所有数据")
+            print("\n[NodeManager] 开始清空所有数据和表结构")
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 按照依赖关系顺序删除数据
-            # 1. 先删除任务状态（依赖于分配）
-            cursor.execute('DELETE FROM task_status')
-            print("[NodeManager] 已清空任务状态表")
+            # 按照依赖关系顺序删除表
+            # 1. 先删除任务状态表（依赖于分配）
+            cursor.execute('DROP TABLE IF EXISTS task_status')
+            print("[NodeManager] 已删除任务状态表")
             
-            # 2. 删除分配（依赖于作业和节点）
-            cursor.execute('DELETE FROM allocations')
-            print("[NodeManager] 已清空分配表")
+            # 2. 删除分配表（依赖于作业和节点）
+            cursor.execute('DROP TABLE IF EXISTS allocations')
+            print("[NodeManager] 已删除分配表")
             
-            # 3. 删除作业
-            cursor.execute('DELETE FROM jobs')
-            print("[NodeManager] 已清空作业表")
+            # 3. 删除作业表
+            cursor.execute('DROP TABLE IF EXISTS jobs')
+            print("[NodeManager] 已删除作业表")
             
-            # 4. 删除节点
-            cursor.execute('DELETE FROM nodes')
-            print("[NodeManager] 已清空节点表")
+            # 4. 删除节点表
+            cursor.execute('DROP TABLE IF EXISTS nodes')
+            print("[NodeManager] 已删除节点表")
             
-            # 5. 删除作业模板
-            cursor.execute('DELETE FROM job_templates')
-            print("[NodeManager] 已清空作业模板表")
+            # # 5. 删除作业模板表
+            # cursor.execute('DROP TABLE IF EXISTS job_templates')
+            # print("[NodeManager] 已删除作业模板表")
             
             conn.commit()
             conn.close()
             
-            print("[NodeManager] 所有数据已清空")
+            print("[NodeManager] 所有数据和表结构已清空")
             return True
             
         except Exception as e:
-            print(f"[NodeManager] 清空数据时出错: {e}")
+            print(f"[NodeManager] 清空数据和表结构时出错: {e}")
             return False 

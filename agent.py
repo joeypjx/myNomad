@@ -129,10 +129,10 @@ class TaskAllocation:
             self.status = AllocationStatus.PENDING
 
 class NodeAgent:
-    def __init__(self, server_url: str, region: str, agent_port: int):
+    def __init__(self, server_url: str, agent_port: int):
         self.server_url = server_url
         self.node_id = self._get_or_create_node_id()
-        self.region = region
+        self.ip_address = self._get_local_ip()
         self.healthy = True
         self.heartbeat_interval = 5  # 心跳间隔（秒）
         self.agent_port = agent_port
@@ -169,6 +169,20 @@ class NodeAgent:
             print(f"[Agent] 保存节点ID到文件时出错: {e}")
         
         return new_node_id
+
+    def _get_local_ip(self) -> str:
+        """获取本机IP地址"""
+        import socket
+        try:
+            # 创建一个临时socket连接来获取本机IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception as e:
+            print(f"[Agent] 获取本机IP地址时出错: {e}")
+            return "127.0.0.1"  # 如果获取失败，返回本地回环地址
 
     def setup_routes(self):
         """设置API路由"""
@@ -339,7 +353,7 @@ class NodeAgent:
         """向服务器注册节点"""
         registration_data = {
             "node_id": self.node_id,
-            "region": self.region,
+            "ip_address": self.ip_address,
             "resources": self.get_resources(),
             "healthy": self.healthy,
             "endpoint": f"http://localhost:{self.agent_port}"  # agent的endpoint
@@ -351,7 +365,7 @@ class NodeAgent:
                 json=registration_data
             )
             if response.status_code == 200:
-                print(f"[Agent] 节点 {self.node_id} 注册成功")
+                print(f"[Agent] 节点 {self.node_id} (IP: {self.ip_address}) 注册成功")
                 return True
             else:
                 print(f"[Agent] 节点注册失败: {response.status_code}")
@@ -463,7 +477,7 @@ class NodeAgent:
 
 if __name__ == "__main__":
     # 示例使用
-    agent = NodeAgent("http://localhost:8500", "us-west", 8501)
+    agent = NodeAgent("http://localhost:8500", 8501)
     agent.start()
     
     # 保持主程序运行

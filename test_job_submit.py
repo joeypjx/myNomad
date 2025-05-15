@@ -45,6 +45,13 @@ def main():
                             "command": "python my_script.py"
                         }
                     }
+                ],
+                "constraints": [ 
+                    {
+                        "attribute": "node_id",
+                        "operator": "=",
+                        "value": "1234567890"
+                    }
                 ]
             }
         ],

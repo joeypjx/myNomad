@@ -50,9 +50,10 @@ class Task:
         self.task_type = TaskType.CONTAINER if config.get("image") else TaskType.PROCESS
 
 class TaskGroup:
-    def __init__(self, name: str, tasks: List[Task]):
+    def __init__(self, name: str, tasks: List[Task], constraints: List[Dict] = None):
         self.name = name
         self.tasks = tasks
+        self.constraints = constraints or []  # 任务组级别的约束条件
         self.status = JobStatus.PENDING
         
     def get_total_resources(self) -> Dict:
@@ -75,7 +76,8 @@ class Job:
                         resources=task["resources"],
                         config=task.get("config", {})
                     ) for task in group["tasks"]
-                ]
+                ],
+                constraints=group.get("constraints", [])  # 从任务组定义中获取约束条件
             ) for group in task_groups
         ]
         self.constraints = constraints

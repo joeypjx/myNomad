@@ -213,50 +213,79 @@ class SchedulerPlanner:
         return False
 
     def feasibility_check(self, task_group: TaskGroup, use_parsed_resources: bool = False) -> List[Dict]:
-        """Проверяет выполнимость узла. Использует self.nodes_in_evaluation если use_parsed_resources is True."""
+        """检查节点是否满足任务组要求"""
         target_nodes = self.nodes_in_evaluation if use_parsed_resources else self.original_nodes_snapshot
         
         feasible_nodes = []
-        # print(f"[SchedulerPlanner] Начало проверки выполнимости узлов, всего {len(target_nodes)} узлов для проверки для группы {task_group.name}")
         
         total_resources_needed = task_group.get_total_resources()
         
         for node in target_nodes:
             if not node.get("healthy", False): # Ensure healthy key exists
-                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} неработоспособен, пропуск")
                 continue
             
-            # Region constraint (assuming job.constraints is a dict)
-            job_region_constraint = self.job.constraints.get("region")
-            if job_region_constraint and node.get("region") != job_region_constraint:
-                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не соответствует региону, требуется: {job_region_constraint}, фактически: {node.get('region')}")
+            # 检查任务组级别的约束条件
+            constraints_satisfied = True
+            for constraint in task_group.constraints:
+                attribute = constraint.get("attribute")
+                operator = constraint.get("operator")
+                value = constraint.get("value")
+                
+                if not all([attribute, operator, value]):
+                    continue
+                    
+                node_value = node.get(attribute)
+                if node_value is None:
+                    constraints_satisfied = False
+                    break
+                    
+                # 根据操作符检查约束条件
+                if operator == "=":
+                    if str(node_value) != str(value):
+                        constraints_satisfied = False
+                        break
+                elif operator == "!=":
+                    if str(node_value) == str(value):
+                        constraints_satisfied = False
+                        break
+                elif operator == ">":
+                    if not (isinstance(node_value, (int, float)) and isinstance(value, (int, float)) and node_value > value):
+                        constraints_satisfied = False
+                        break
+                elif operator == "<":
+                    if not (isinstance(node_value, (int, float)) and isinstance(value, (int, float)) and node_value < value):
+                        constraints_satisfied = False
+                        break
+                elif operator == "regex":
+                    import re
+                    if not re.search(str(value), str(node_value)):
+                        constraints_satisfied = False
+                        break
+            
+            if not constraints_satisfied:
                 continue
             
-            # Resource check
+            # 资源检查
             node_resources = node.get('resources', {"cpu":0, "memory":0}) # Already a dict if use_parsed_resources
             if not use_parsed_resources: # If using original snapshot, parse now
                 try:
                     node_resources = json.loads(str(node_resources)) # Ensure it's a string first if it might be a dict
                 except (TypeError, json.JSONDecodeError):
                     if not isinstance(node_resources, dict): # Check if already a dict
-                         # print(f"[SchedulerPlanner] Ошибка парсинга ресурсов для узла {node.get('node_id')}. Ресурсы: {node_resources}")
                          continue # Skip node if resources are malformed
 
             if node_resources.get("cpu", 0) < total_resources_needed.get("cpu", 0):
-                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не имеет достаточного CPU, требуется: {total_resources_needed['cpu']}, доступно: {node_resources.get('cpu', 0)}")
                 continue
                 
             if node_resources.get("memory", 0) < total_resources_needed.get("memory", 0):
-                # print(f"[SchedulerPlanner] Узел {node.get('node_id')} не имеет достаточной памяти, требуется: {total_resources_needed['memory']}, доступно: {node_resources.get('memory', 0)}")
                 continue
             
-            # print(f"[SchedulerPlanner] Узел {node.get('node_id')} удовлетворяет требованиям для {task_group.name}")
             feasible_nodes.append(node)
             
         return feasible_nodes
 
     def rank_nodes(self, nodes: List[Dict], use_parsed_resources: bool = False) -> List[Dict]:
-        """Ранжирует подходящие узлы."""
+        """节点排序"""
         # Simple ranking: prefer nodes with more CPU, then more Memory (bin packing-like)
         # When use_parsed_resources is True, nodes' 'resources' are already dicts.
         def get_score(node):
@@ -278,9 +307,6 @@ class SchedulerPlanner:
         if not node["healthy"]:
             return False
             
-        if node["region"] != self.job.constraints.get("region"):
-            return False
-        
         # 如果已经使用解析过的资源，直接使用字典，不需再次解析
         if use_parsed_resources:
             resources = node["resources"]  # 已经是字典

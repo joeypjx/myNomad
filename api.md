@@ -101,17 +101,17 @@
                             }
                         }
                         // ... other tasks in the group
+                    ],
+                    "constraints": [ // Optional
+                        {
+                            "attribute": "string (e.g., region, node_id, or custom attribute)",
+                            "operator": "string (e.g., =, !=, >, <, regex)",
+                            "value": "string"
+                        }
+                    // ... other constraints
                     ]
                 }
                 // ... other task groups
-            ],
-            "constraints": [ // Optional
-                {
-                    "attribute": "string (e.g., region, node_id, or custom attribute)",
-                    "operator": "string (e.g., =, !=, >, <, regex)",
-                    "value": "string"
-                }
-                // ... other constraints
             ]
             // "job_id": "string (Optional, if updating an existing job, though a PUT to /jobs/<job_id> is more conventional)"
         }
