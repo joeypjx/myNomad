@@ -104,6 +104,7 @@ class AllocationExecutor:
             self.is_running = True
             print("[AllocationExecutor] 服务已启动")
 
+    # unuse
     def stop(self):
         """停止分配执行器服务"""
         self.is_running = False

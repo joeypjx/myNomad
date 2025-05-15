@@ -27,6 +27,7 @@ class ResourceManager:
             self.check_thread.start()
             print("[ResourceManager] 节点健康监控已启动")
     
+    # unuse
     def stop_health_monitor(self):
         """停止健康监控线程"""
         self.is_running = False

@@ -526,36 +526,6 @@ class NodeManager:
             print(f"[NodeManager] 获取节点分配信息时出错: {e}")
             return []
 
-    # unuse
-    def get_allocation_tasks(self, allocation_id: str) -> List[Dict]:
-        """获取分配的所有任务状态"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT task_name, status, start_time, end_time, error, exit_code, message
-                FROM task_status
-                WHERE allocation_id = ?
-            ''', (allocation_id,))
-            rows = cursor.fetchall()
-            conn.close()
-            
-            tasks = []
-            for row in rows:
-                tasks.append({
-                    "task_name": row[0],
-                    "status": row[1],
-                    "start_time": row[2],
-                    "end_time": row[3],
-                    "error": row[4],
-                    "exit_code": row[5],
-                    "message": row[6]
-                })
-            return tasks
-        except Exception as e:
-            print(f"[NodeManager] 获取任务状态信息时出错: {e}")
-            return []
-
     def get_job_info(self, job_id: str) -> Optional[Dict]:
         """获取作业详细信息"""
         try:
